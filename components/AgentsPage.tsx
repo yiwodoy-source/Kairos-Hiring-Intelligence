@@ -61,6 +61,12 @@ interface ActionBanner {
   message: string;
 }
 
+interface SourcerConfig {
+  linkedin: { sessionActive: boolean; scriptReady: boolean };
+  scrapeGraph: { configured: boolean };
+  stats: { totalSourced: number };
+}
+
 // ---------------------------------------------------------------------------
 // Agent definitions
 // ---------------------------------------------------------------------------
@@ -87,6 +93,7 @@ const AGENT_DEFS = [
     bgClass: 'bg-violet-500/10',
     capabilities: ['Gmail OAuth watch', 'PDF parsing', 'Deduplication', 'Auto-response'],
     triggerable: true,
+    triggerEndpoint: '/api/hr-agent/run',
   },
   {
     id: 'screener',
@@ -99,7 +106,8 @@ const AGENT_DEFS = [
     borderColor: '#06B6D4',
     bgClass: 'bg-cyan-500/10',
     capabilities: ['Gemini AI analysis', 'Skill matching', 'Fit scoring 0–100', 'Auto-shortlist'],
-    triggerable: false,
+    triggerable: true,
+    triggerEndpoint: '/api/hr-agent/trigger/screener',
   },
   {
     id: 'sourcer',
@@ -112,7 +120,8 @@ const AGENT_DEFS = [
     borderColor: '#10B981',
     bgClass: 'bg-emerald-500/10',
     capabilities: ['Multi-portal search', 'Profile enrichment', 'Duplicate detection', 'Role matching'],
-    triggerable: false,
+    triggerable: true,
+    triggerEndpoint: '/api/hr-agent/trigger/sourcer',
   },
   {
     id: 'outreach',
@@ -125,7 +134,8 @@ const AGENT_DEFS = [
     borderColor: '#F59E0B',
     bgClass: 'bg-amber-500/10',
     capabilities: ['Email templates', 'Reply tracking', 'Follow-up scheduling', 'WhatsApp (planned)'],
-    triggerable: false,
+    triggerable: true,
+    triggerEndpoint: '/api/hr-agent/trigger/outreach',
   },
   {
     id: 'scheduler',
@@ -138,7 +148,8 @@ const AGENT_DEFS = [
     borderColor: '#EC4899',
     bgClass: 'bg-pink-500/10',
     capabilities: ['Calendar integration', 'Availability polling', 'Meet link generation', 'Reminders'],
-    triggerable: false,
+    triggerable: true,
+    triggerEndpoint: '/api/hr-agent/trigger/scheduler',
   },
   {
     id: 'coordinator',
@@ -151,7 +162,8 @@ const AGENT_DEFS = [
     borderColor: '#6366F1',
     bgClass: 'bg-indigo-500/10',
     capabilities: ['Agent orchestration', 'Drive/Sheets export', 'Health monitoring', 'Daily summaries'],
-    triggerable: false,
+    triggerable: true,
+    triggerEndpoint: '/api/hr-agent/trigger/coordinator',
   },
 ] as const;
 
@@ -227,6 +239,7 @@ interface AgentCardProps {
   lastCycleAt: string | null;
   onTrigger: () => void;
   triggerLoading: boolean;
+  sourcerConfig?: SourcerConfig | null;
 }
 
 const AgentCard: React.FC<AgentCardProps> = ({
@@ -236,6 +249,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
   lastCycleAt,
   onTrigger,
   triggerLoading,
+  sourcerConfig,
 }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -306,6 +320,37 @@ const AgentCard: React.FC<AgentCardProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Sourcer status indicators */}
+      {def.id === 'sourcer' && sourcerConfig && (
+        <div className="px-5 pb-3 flex flex-wrap gap-1.5">
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              sourcerConfig.linkedin.sessionActive
+                ? 'bg-emerald-500/10 text-emerald-500'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${sourcerConfig.linkedin.sessionActive ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+            LinkedIn {sourcerConfig.linkedin.sessionActive ? 'session ready' : 'no session'}
+          </span>
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              sourcerConfig.scrapeGraph.configured
+                ? 'bg-emerald-500/10 text-emerald-500'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${sourcerConfig.scrapeGraph.configured ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+            ScrapeGraph {sourcerConfig.scrapeGraph.configured ? 'API ready' : 'no API key'}
+          </span>
+          {sourcerConfig.stats.totalSourced > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-violet-500/10 text-violet-400">
+              {sourcerConfig.stats.totalSourced} sourced
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Footer */}
       <div className="mt-auto border-t border-slate-100 dark:border-slate-800 px-5 py-3 flex items-center justify-between gap-2">
@@ -576,10 +621,11 @@ export const AgentsPage: React.FC = () => {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [triggerLoading, setTriggerLoading] = useState(false);
+  const [triggerLoading, setTriggerLoading] = useState<Record<string, boolean>>({});
   const [batchScreening, setBatchScreening] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [actionBanner, setActionBanner] = useState<ActionBanner | null>(null);
+  const [sourcerConfig, setSourcerConfig] = useState<SourcerConfig | null>(null);
 
   // ── Toast helpers ──────────────────────────────────────────────────────────
   const addToast = useCallback((type: Toast['type'], message: string) => {
@@ -608,10 +654,16 @@ export const AgentsPage: React.FC = () => {
       setStats(statsData);
     } catch (err) {
       console.error('[AgentsPage] Fetch error:', err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
     }
+
+    // Fetch sourcer config separately (non-critical)
+    try {
+      const cfg = await apiFetch<SourcerConfig>('/api/hr-agent/sourcer/config');
+      setSourcerConfig(cfg);
+    } catch { /* sourcer config is non-critical */ }
+
+    setLoading(false);
+    setRefreshing(false);
   }, []);
 
   useEffect(() => {
@@ -622,15 +674,15 @@ export const AgentsPage: React.FC = () => {
 
   // ── Actions ────────────────────────────────────────────────────────────────
   const handleRunCycle = async () => {
-    setTriggerLoading(true);
+    setTriggerLoading(prev => ({ ...prev, intake: true }));
     try {
       await apiFetch('/api/hr-agent/run', { method: 'POST' });
-      addToast('success', 'Processing cycle started. Checking for new candidates…');
+      addToast('success', 'Intake cycle started. Checking Gmail for new CVs…');
       await fetchData(true);
-    } catch (err) {
-      addToast('error', 'Unable to start the processing cycle right now.');
+    } catch {
+      addToast('error', 'Unable to start the intake cycle right now.');
     } finally {
-      setTriggerLoading(false);
+      setTriggerLoading(prev => ({ ...prev, intake: false }));
     }
   };
 
@@ -674,6 +726,31 @@ export const AgentsPage: React.FC = () => {
   const handleAgentTrigger = async (agentId: string) => {
     if (agentId === 'intake') {
       await handleRunCycle();
+      return;
+    }
+
+    const def = AGENT_DEFS.find(d => d.id === agentId);
+    if (!def) return;
+
+    setTriggerLoading(prev => ({ ...prev, [agentId]: true }));
+    setActionBanner(null);
+    try {
+      const result = await apiFetch<{ success: boolean; message?: string }>(
+        def.triggerEndpoint,
+        { method: 'POST' }
+      );
+      setActionBanner({
+        type: 'success',
+        message: result.message ?? `${def.name} completed successfully.`,
+      });
+      await fetchData(true);
+    } catch {
+      setActionBanner({
+        type: 'error',
+        message: `${def.name} could not be triggered. Please try again.`,
+      });
+    } finally {
+      setTriggerLoading(prev => ({ ...prev, [agentId]: false }));
     }
   };
 
@@ -755,10 +832,10 @@ export const AgentsPage: React.FC = () => {
             {/* Run cycle */}
             <button
               onClick={handleRunCycle}
-              disabled={triggerLoading}
+              disabled={!!triggerLoading['intake']}
               className="flex items-center gap-2 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:opacity-60 px-4 py-2.5 text-sm font-semibold text-white transition-colors"
             >
-              {triggerLoading ? (
+              {triggerLoading['intake'] ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
               ) : (
                 <Play className="w-4 h-4" />
@@ -858,7 +935,8 @@ export const AgentsPage: React.FC = () => {
               isCoordinatorRunning={isCoordinatorRunning}
               lastCycleAt={agentStatus.syncHealth.lastAttemptAt}
               onTrigger={() => handleAgentTrigger(def.id)}
-              triggerLoading={triggerLoading && def.id === 'intake'}
+              triggerLoading={!!triggerLoading[def.id]}
+              sourcerConfig={def.id === 'sourcer' ? sourcerConfig : undefined}
             />
           ))}
         </div>

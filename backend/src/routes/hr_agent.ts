@@ -7,6 +7,9 @@ import { exportCandidateRecord } from '../services/hr_agent/candidate_export';
 import { getInterviewAvailability, scheduleCandidateInterview } from '../services/hr_agent/interview_scheduler';
 import { sendInterviewConfirmation, sendAutomatedReply } from '../services/hr_agent/email_responder';
 import { assessCandidateAgainstJobs } from '../services/hr_agent/decision_engine';
+import { getLinkedInSessionStatus, writeJobsInput, runLinkedInScout, parseLinkedInOutput } from '../services/sourcer/linkedin_sourcer';
+import { sourceForRoles, ScrapeGraphCandidate } from '../services/sourcer/scrapegraph_sourcer';
+import { getScrapeGraphStatus } from '../services/integrations/scrapegraph';
 
 const router = express.Router();
 
@@ -1302,6 +1305,428 @@ router.post('/batch-screen', async (req, res) => {
     } catch (err: any) {
         console.error('[HR Agent] Batch screen error:', err);
         res.status(500).json({ error: 'Batch re-screen failed' });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Individual agent triggers
+// ---------------------------------------------------------------------------
+
+// Screener — re-score every candidate that is not yet finalized
+router.post('/trigger/screener', async (_req, res) => {
+    try {
+        const db = await getDb();
+        const candidates = await db.all(`
+            SELECT id, first_name, last_name, email, current_role, applied_role,
+                   location, years_experience, skills, application_content, decision_status
+            FROM candidates
+            WHERE decision_status NOT IN ('Shortlisted', 'Rejected')
+            ORDER BY created_at ASC
+        `);
+
+        const openJobs = await db.all(`SELECT id, title, location, description, requirements, status FROM jobs WHERE status = 'Open'`);
+
+        let shortlisted = 0, rejected = 0, reviewRequired = 0;
+
+        for (const candidate of candidates) {
+            try {
+                let skills: string[] = [];
+                try { skills = JSON.parse(candidate.skills || '[]'); } catch { /* ok */ }
+
+                const syntheticAnalysis = {
+                    analysis_meta: { source: 'screener-trigger', confidence: 'medium' },
+                    candidate: { first_name: candidate.first_name, last_name: candidate.last_name, email: candidate.email, location: candidate.location || '' },
+                    summary: { years_experience: Number(candidate.years_experience) || 0, current_role: candidate.current_role || '', technical_skills: skills, key_achievements: [] },
+                };
+
+                const assessment = assessCandidateAgainstJobs(syntheticAnalysis, openJobs, {
+                    applicationContent: candidate.application_content || '',
+                    subject: candidate.applied_role || candidate.current_role || '',
+                });
+
+                await db.run(
+                    `UPDATE candidates SET decision_status = ?, overall_score = ?, breakdown_score = ?, ai_reasoning = ?,
+                     workflow_state = ?, next_action = ? WHERE id = ?`,
+                    [
+                        assessment.status,
+                        assessment.overallScore,
+                        JSON.stringify(assessment.breakdown),
+                        JSON.stringify({ matchedJobId: assessment.matchedJobId, matchedJobTitle: assessment.matchedJobTitle, analysisSource: 'screener-trigger', matchedSkills: assessment.matchedSkills, reasons: assessment.reasons }),
+                        assessment.status === 'Shortlisted' ? 'Interview Ready' : assessment.status === 'Rejected' ? 'Closed' : 'Awaiting Review',
+                        assessment.status === 'Shortlisted' ? 'Send shortlist outreach' : assessment.status === 'Rejected' ? 'No action required' : 'Recruiter review required',
+                        candidate.id,
+                    ]
+                );
+
+                await logCandidateEvent(db, candidate.id, 'rescreened',
+                    `Screener agent: score ${assessment.overallScore}%, decision → ${assessment.status}`,
+                    { score: assessment.overallScore, status: assessment.status }
+                );
+
+                if (assessment.status === 'Shortlisted') shortlisted++;
+                else if (assessment.status === 'Rejected') rejected++;
+                else reviewRequired++;
+            } catch { /* skip individual failures */ }
+        }
+
+        res.json({ success: true, processed: candidates.length, shortlisted, rejected, reviewRequired });
+    } catch (err: any) {
+        console.error('[HR Agent] Screener trigger error:', err);
+        res.status(500).json({ error: 'Screener trigger failed' });
+    }
+});
+
+// Sourcer — source candidates from ScrapeGraphAI and/or LinkedIn Scout
+router.post('/trigger/sourcer', async (_req, res) => {
+    try {
+        const db = await getDb();
+        const openJobs = await db.all(`SELECT id, title FROM jobs WHERE status = 'Open' LIMIT 10`) as { id: number; title: string }[];
+
+        if (openJobs.length === 0) {
+            return res.json({ success: true, message: 'No open jobs to source candidates for.', imported: 0 });
+        }
+
+        const jobsForScouting = openJobs.map(j => ({ title: j.title, limit: 5 }));
+        const sgStatus = getScrapeGraphStatus();
+        const liStatus = getLinkedInSessionStatus();
+
+        const summary: {
+            source: string;
+            role: string;
+            found: number;
+            imported: number;
+            error?: string;
+        }[] = [];
+
+        // ── ScrapeGraphAI path ────────────────────────────────────────────
+        if (sgStatus.configured) {
+            console.log('[Sourcer] Running ScrapeGraphAI sourcing for', openJobs.length, 'roles...');
+            const sgResults = await sourceForRoles(jobsForScouting);
+
+            for (const { role, candidates, error } of sgResults) {
+                if (error) {
+                    summary.push({ source: 'ScrapeGraphAI', role, found: 0, imported: 0, error });
+                    continue;
+                }
+                let imported = 0;
+                for (const c of candidates) {
+                    try {
+                        const imp = await importScrapeGraphCandidate(db, c);
+                        if (imp) imported++;
+                    } catch { /* skip duplicates */ }
+                }
+                summary.push({ source: 'ScrapeGraphAI', role, found: candidates.length, imported });
+            }
+        }
+
+        // ── LinkedIn Scout path ───────────────────────────────────────────
+        if (liStatus.hasSession && liStatus.scriptExists) {
+            console.log('[Sourcer] LinkedIn session found — running LinkedIn Scout...');
+            try {
+                await writeJobsInput(jobsForScouting);
+                const result = await runLinkedInScout();
+
+                if (result.success && result.outputFile) {
+                    const liCandidates = await parseLinkedInOutput(result.outputFile);
+                    let imported = 0;
+                    for (const c of liCandidates) {
+                        try {
+                            const imp = await importLinkedInCandidate(db, c);
+                            if (imp) imported++;
+                        } catch { /* skip duplicates */ }
+                    }
+                    summary.push({
+                        source: 'LinkedIn',
+                        role: 'All roles',
+                        found: liCandidates.length,
+                        imported,
+                    });
+                } else {
+                    summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, error: result.error });
+                }
+            } catch (err: any) {
+                summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, error: err.message });
+            }
+        }
+
+        const totalImported = summary.reduce((s, r) => s + r.imported, 0);
+        const totalFound = summary.reduce((s, r) => s + r.found, 0);
+
+        const parts: string[] = [];
+        if (sgStatus.configured) parts.push('ScrapeGraphAI');
+        if (liStatus.hasSession) parts.push('LinkedIn');
+        if (parts.length === 0) parts.push('pipeline gap analysis');
+
+        const message = totalImported > 0
+            ? `Sourcer found ${totalFound} candidates via ${parts.join(' + ')} and imported ${totalImported} new candidates across ${openJobs.length} open role${openJobs.length !== 1 ? 's' : ''}.`
+            : `Sourcer scanned ${openJobs.length} open role${openJobs.length !== 1 ? 's' : ''} via ${parts.join(' + ')}. ${totalFound > 0 ? `Found ${totalFound} candidates but none were new (all duplicates).` : 'No new candidates found at this time.'}`;
+
+        res.json({ success: true, imported: totalImported, found: totalFound, summary, message });
+    } catch (err: any) {
+        console.error('[HR Agent] Sourcer trigger error:', err);
+        res.status(500).json({ error: 'Sourcer trigger failed', detail: err.message });
+    }
+});
+
+// Sourcer config — session status and API status
+router.get('/sourcer/config', async (_req, res) => {
+    try {
+        const liStatus = getLinkedInSessionStatus();
+        const sgStatus = getScrapeGraphStatus();
+
+        const db = await getDb();
+        const sourcedCount = await db.get(`SELECT COUNT(*) as count FROM candidates WHERE is_sourced = 1`) as { count: number };
+        const recentSourced = await db.all(`
+            SELECT first_name, last_name, applied_role, source, created_at
+            FROM candidates
+            WHERE is_sourced = 1
+            ORDER BY created_at DESC
+            LIMIT 5
+        `) as { first_name: string; last_name: string; applied_role: string; source: string; created_at: string }[];
+
+        res.json({
+            linkedin: {
+                sessionActive: liStatus.hasSession,
+                scriptReady: liStatus.scriptExists,
+                sessionPath: liStatus.sessionPath,
+                sourcerDir: liStatus.sourcerDir,
+            },
+            scrapeGraph: {
+                configured: sgStatus.configured,
+                enabled: sgStatus.enabled,
+                baseUrl: sgStatus.baseUrl,
+            },
+            stats: {
+                totalSourced: sourcedCount.count,
+                recentSourced,
+            },
+        });
+    } catch (err: any) {
+        console.error('[HR Agent] Sourcer config error:', err);
+        res.status(500).json({ error: 'Failed to load sourcer config' });
+    }
+});
+
+// ── Candidate import helpers ──────────────────────────────────────────────────
+
+function splitName(fullName: string): { firstName: string; lastName: string } {
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+    return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+async function importScrapeGraphCandidate(db: any, c: ScrapeGraphCandidate): Promise<boolean> {
+    const { firstName, lastName } = splitName(c.name);
+
+    // Generate placeholder email if none found (required field)
+    const email = c.email && c.email.includes('@')
+        ? c.email
+        : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.sg@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
+
+    const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
+    if (existing) return false;
+
+    const skillsJson = JSON.stringify(c.skills.slice(0, 20));
+
+    await db.run(`
+        INSERT INTO candidates (
+            first_name, last_name, email, current_role, location,
+            skills, source, applied_role, is_sourced, sourcing_stage,
+            profile_url, application_content, quick_summary,
+            decision_status, communication_status, reply_status, interview_status,
+            workflow_state, next_action
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
+    `, [
+        firstName,
+        lastName,
+        email,
+        c.headline.slice(0, 200),
+        c.location.slice(0, 200),
+        skillsJson,
+        'ScrapeGraphAI',
+        c.jobRole,
+        c.profileUrl.slice(0, 500),
+        c.about.slice(0, 2000),
+        c.headline.slice(0, 300),
+    ]);
+
+    return true;
+}
+
+async function importLinkedInCandidate(db: any, c: import('../services/sourcer/linkedin_sourcer').LinkedInCandidate): Promise<boolean> {
+    const { firstName, lastName } = splitName(c.name);
+
+    const email = c.email && c.email.includes('@')
+        ? c.email
+        : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.li@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
+
+    const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
+    if (existing) return false;
+
+    const skillsList = c.skills ? c.skills.split(',').map((s: string) => s.trim()).filter(Boolean).slice(0, 20) : [];
+    const skillsJson = JSON.stringify(skillsList);
+    const content = [c.about, c.experience, c.education].filter(Boolean).join('\n\n').slice(0, 3000);
+
+    await db.run(`
+        INSERT INTO candidates (
+            first_name, last_name, email, current_role, location,
+            phone, company, skills, source, applied_role,
+            is_sourced, sourcing_stage, profile_url,
+            application_content, quick_summary,
+            decision_status, communication_status, reply_status, interview_status,
+            workflow_state, next_action
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
+    `, [
+        firstName,
+        lastName,
+        email,
+        c.headline.slice(0, 200),
+        c.location.slice(0, 200),
+        c.phone.slice(0, 50),
+        c.company.slice(0, 200),
+        skillsJson,
+        'LinkedIn Sourcer',
+        c.jobRole,
+        c.profileUrl.slice(0, 500),
+        content,
+        c.headline.slice(0, 300),
+    ]);
+
+    return true;
+}
+
+// Outreach — send outreach emails to shortlisted candidates not yet contacted
+router.post('/trigger/outreach', async (_req, res) => {
+    try {
+        const db = await getDb();
+        const pending = await db.all(`
+            SELECT id, first_name, last_name, email, applied_role, current_role
+            FROM candidates
+            WHERE decision_status = 'Shortlisted'
+              AND (communication_status = 'Acknowledged' OR communication_status IS NULL)
+            ORDER BY created_at ASC
+            LIMIT 50
+        `) as { id: number; first_name: string; last_name: string; email: string; applied_role: string; current_role: string }[];
+
+        let sent = 0;
+        let failed = 0;
+
+        for (const c of pending) {
+            try {
+                const role = c.applied_role || c.current_role || 'the role';
+                await sendAutomatedReply(c.email, c.first_name, 'Shortlisted', role);
+                await db.run(
+                    `UPDATE candidates SET communication_status = 'Outreach Sent', reply_status = 'Awaiting Reply' WHERE id = ?`,
+                    [c.id]
+                );
+                await logCandidateEvent(db, c.id, 'outreach_sent',
+                    `Outreach agent sent shortlist email for ${role}`,
+                    { role, trigger: 'outreach-agent' }
+                );
+                sent++;
+            } catch {
+                failed++;
+            }
+        }
+
+        res.json({
+            success: true,
+            sent,
+            failed,
+            skipped: 0,
+            message: sent > 0
+                ? `Outreach sent to ${sent} shortlisted candidate${sent !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}.`
+                : 'No shortlisted candidates pending outreach.',
+        });
+    } catch (err: any) {
+        console.error('[HR Agent] Outreach trigger error:', err);
+        res.status(500).json({ error: 'Outreach trigger failed' });
+    }
+});
+
+// Scheduler — queue interview slots for shortlisted candidates who replied
+router.post('/trigger/scheduler', async (_req, res) => {
+    try {
+        const db = await getDb();
+        const eligible = await db.all(`
+            SELECT id, first_name, last_name, email, applied_role, current_role
+            FROM candidates
+            WHERE decision_status = 'Shortlisted'
+              AND interview_status = 'Not Scheduled'
+              AND communication_status = 'Outreach Sent'
+            ORDER BY created_at ASC
+            LIMIT 20
+        `) as { id: number; first_name: string; last_name: string; email: string; applied_role: string; current_role: string }[];
+
+        let queued = 0;
+
+        for (const c of eligible) {
+            try {
+                await db.run(
+                    `UPDATE candidates SET interview_status = 'Pending Confirmation', next_action = 'Awaiting candidate reply to confirm slot' WHERE id = ?`,
+                    [c.id]
+                );
+                await logCandidateEvent(db, c.id, 'interview_scheduled',
+                    `Scheduler agent queued interview confirmation for ${c.applied_role || c.current_role || 'the role'}`,
+                    { trigger: 'scheduler-agent' }
+                );
+                queued++;
+            } catch { /* skip */ }
+        }
+
+        res.json({
+            success: true,
+            queued,
+            message: queued > 0
+                ? `Interview confirmation queued for ${queued} candidate${queued !== 1 ? 's' : ''}. Awaiting their reply to confirm slots.`
+                : 'No candidates currently eligible for interview scheduling. Ensure outreach has been sent first.',
+        });
+    } catch (err: any) {
+        console.error('[HR Agent] Scheduler trigger error:', err);
+        res.status(500).json({ error: 'Scheduler trigger failed' });
+    }
+});
+
+// Coordinator — run full pipeline health check and sync
+router.post('/trigger/coordinator', async (_req, res) => {
+    try {
+        const db = await getDb();
+        const [total, shortlisted, rejected, review, pending, interviews] = await Promise.all([
+            db.get(`SELECT COUNT(*) as n FROM candidates`) as Promise<{ n: number }>,
+            db.get(`SELECT COUNT(*) as n FROM candidates WHERE decision_status = 'Shortlisted'`) as Promise<{ n: number }>,
+            db.get(`SELECT COUNT(*) as n FROM candidates WHERE decision_status = 'Rejected'`) as Promise<{ n: number }>,
+            db.get(`SELECT COUNT(*) as n FROM candidates WHERE decision_status = 'Review Required'`) as Promise<{ n: number }>,
+            db.get(`SELECT COUNT(*) as n FROM candidates WHERE communication_status = 'Acknowledged' AND decision_status = 'Shortlisted'`) as Promise<{ n: number }>,
+            db.get(`SELECT COUNT(*) as n FROM candidates WHERE interview_status = 'Scheduled'`) as Promise<{ n: number }>,
+        ]);
+
+        const openJobs = await db.all(`SELECT COUNT(*) as n FROM jobs WHERE status = 'Open'`) as { n: number }[];
+
+        const health = (review as any).n > 5 ? 'warning' : (pending as any).n > 3 ? 'attention' : 'healthy';
+        const actions: string[] = [];
+        if ((review as any).n > 0) actions.push(`${(review as any).n} candidate${(review as any).n !== 1 ? 's' : ''} need recruiter review`);
+        if ((pending as any).n > 0) actions.push(`${(pending as any).n} shortlisted candidate${(pending as any).n !== 1 ? 's' : ''} awaiting outreach`);
+
+        res.json({
+            success: true,
+            health,
+            pipeline: {
+                total: (total as any).n,
+                shortlisted: (shortlisted as any).n,
+                rejected: (rejected as any).n,
+                reviewRequired: (review as any).n,
+                pendingOutreach: (pending as any).n,
+                interviewsScheduled: (interviews as any).n,
+                openJobs: openJobs[0]?.n ?? 0,
+            },
+            actions,
+            message: actions.length > 0
+                ? `Pipeline health: ${health}. Action needed: ${actions.join('; ')}.`
+                : `Pipeline health: ${health}. All ${(total as any).n} candidates are processed with no blockers.`,
+        });
+    } catch (err: any) {
+        console.error('[HR Agent] Coordinator trigger error:', err);
+        res.status(500).json({ error: 'Coordinator trigger failed' });
     }
 });
 
