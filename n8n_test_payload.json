@@ -1,0 +1,8 @@
+{
+    "event": "cv_processing_trigger",
+    "data": {
+        "timestamp": "2026-02-11T17:39:25+05:30",
+        "test": true,
+        "message": "Testing n8n webhook integration"
+    }
+}

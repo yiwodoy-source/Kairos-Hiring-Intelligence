@@ -1,0 +1,6 @@
+{
+    "event": "cv_processing_trigger",
+    "data": {
+        "test": true
+    }
+}

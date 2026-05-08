@@ -1,0 +1,244 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+3 0 obj
+<< /Length 2045 >>
+stream
+BT
+/F2 20 Tf
+1 0 0 1 54 760 Tm
+(NexusHR AI - Management Summary) Tj
+/F2 14 Tf
+1 0 0 1 54 696 Tm
+(Purpose) Tj
+/F1 10 Tf
+1 0 0 1 54 642 Tm
+(NexusHR AI is an internal HR automation system being developed to reduce manual) Tj
+/F1 10 Tf
+1 0 0 1 54 627 Tm
+(recruitment work and improve hiring coordination. It is not a client product and is not) Tj
+/F1 10 Tf
+1 0 0 1 54 612 Tm
+(intended for sale.) Tj
+/F1 10 Tf
+1 0 0 1 54 568 Tm
+(The system supports HR with candidate intake, CV screening, candidate archiving to) Tj
+/F1 10 Tf
+1 0 0 1 54 553 Tm
+(Drive/Sheets, shortlisting, and future candidate communication and interview scheduling.) Tj
+/F2 14 Tf
+1 0 0 1 54 509 Tm
+(Before The System) Tj
+/F1 10 Tf
+1 0 0 1 54 455 Tm
+(- Candidate data was handled manually across emails, files, spreadsheets, and job) Tj
+/F1 10 Tf
+1 0 0 1 54 440 Tm
+(portals.) Tj
+/F1 10 Tf
+1 0 0 1 54 419 Tm
+(- HR had to review CVs one by one and manually compare them with job requirements.) Tj
+/F1 10 Tf
+1 0 0 1 54 398 Tm
+(- Candidate records were not consistently moved automatically to Drive and Sheets.) Tj
+/F1 10 Tf
+1 0 0 1 54 377 Tm
+(- Follow-up messages, candidate confirmation, and interview scheduling required manual) Tj
+/F1 10 Tf
+1 0 0 1 54 362 Tm
+(effort.) Tj
+/F1 10 Tf
+1 0 0 1 54 341 Tm
+(- Reporting and tracking depended on manual updates.) Tj
+/F2 14 Tf
+1 0 0 1 54 297 Tm
+(After The System) Tj
+/F1 10 Tf
+1 0 0 1 54 243 Tm
+(- Candidate records are centralized in one system.) Tj
+/F1 10 Tf
+1 0 0 1 54 222 Tm
+(- CVs can be processed and scored with AI assistance.) Tj
+/F1 10 Tf
+1 0 0 1 54 201 Tm
+(- All candidate records can be archived to Drive and Sheets for future use.) Tj
+/F1 10 Tf
+1 0 0 1 54 180 Tm
+(- HR gets better visibility into candidate status and automation progress.) Tj
+/F1 10 Tf
+1 0 0 1 54 159 Tm
+(- Future phases will support automated outreach, readiness confirmation, and interview) Tj
+/F1 10 Tf
+1 0 0 1 54 144 Tm
+(scheduling.) Tj
+/F2 14 Tf
+1 0 0 1 54 100 Tm
+(Current Status) Tj
+/F1 8 Tf
+1 0 0 1 54 32 Tm
+(NexusHR AI - Management Summary | Page 1) Tj
+ET
+endstream
+endobj
+4 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 3 0 R >>
+endobj
+5 0 obj
+<< /Length 1759 >>
+stream
+BT
+/F1 10 Tf
+1 0 0 1 54 737 Tm
+(Already implemented:) Tj
+/F1 10 Tf
+1 0 0 1 54 693 Tm
+(- Admin login) Tj
+/F1 10 Tf
+1 0 0 1 54 672 Tm
+(- Job and candidate management) Tj
+/F1 10 Tf
+1 0 0 1 54 651 Tm
+(- Gmail CV intake) Tj
+/F1 10 Tf
+1 0 0 1 54 630 Tm
+(- PDF parsing) Tj
+/F1 10 Tf
+1 0 0 1 54 609 Tm
+(- AI-assisted candidate analysis) Tj
+/F1 10 Tf
+1 0 0 1 54 588 Tm
+(- Shortlist/review/reject status) Tj
+/F1 10 Tf
+1 0 0 1 54 567 Tm
+(- Google Drive upload service for candidate records) Tj
+/F1 10 Tf
+1 0 0 1 54 546 Tm
+(- Google Sheets logging service for candidate records) Tj
+/F1 10 Tf
+1 0 0 1 54 525 Tm
+(- HR AI Agent dashboard) Tj
+/F1 10 Tf
+1 0 0 1 54 481 Tm
+(Recently improved:) Tj
+/F1 10 Tf
+1 0 0 1 54 437 Tm
+(- Login/UI visibility issue fixed) Tj
+/F1 10 Tf
+1 0 0 1 54 416 Tm
+(- Frontend styling configuration corrected) Tj
+/F1 10 Tf
+1 0 0 1 54 395 Tm
+(- Candidate export reporting made more accurate) Tj
+/F1 10 Tf
+1 0 0 1 54 374 Tm
+(- Sheets logging now updates existing candidate rows instead of creating duplicates) Tj
+/F1 10 Tf
+1 0 0 1 54 353 Tm
+(- Backend and frontend TypeScript checks passed) Tj
+/F1 10 Tf
+1 0 0 1 54 332 Tm
+(- Frontend and backend health checks verified) Tj
+/F2 14 Tf
+1 0 0 1 54 288 Tm
+(Key Benefits) Tj
+/F1 10 Tf
+1 0 0 1 54 234 Tm
+(- Reduces repetitive HR effort) Tj
+/F1 10 Tf
+1 0 0 1 54 213 Tm
+(- Improves candidate tracking) Tj
+/F1 10 Tf
+1 0 0 1 54 192 Tm
+(- Makes candidate tracking more consistent) Tj
+/F1 10 Tf
+1 0 0 1 54 171 Tm
+(- Reduces missed records, missed follow-ups, and manual handoff errors) Tj
+/F1 10 Tf
+1 0 0 1 54 150 Tm
+(- Helps HR scale recruitment activity without proportional manual workload) Tj
+/F2 14 Tf
+1 0 0 1 54 106 Tm
+(Next Phase) Tj
+/F1 8 Tf
+1 0 0 1 54 32 Tm
+(NexusHR AI - Management Summary | Page 2) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>
+endobj
+7 0 obj
+<< /Length 1122 >>
+stream
+BT
+/F1 10 Tf
+1 0 0 1 54 737 Tm
+(Recommended next priorities:) Tj
+/F1 10 Tf
+1 0 0 1 54 693 Tm
+(1. Stabilize UI/UX across Login, Recruitment, and HR AI Agent screens.) Tj
+/F1 10 Tf
+1 0 0 1 54 672 Tm
+(2. Harden all-candidate export to Drive and Sheets with clear success/failure status.) Tj
+/F1 10 Tf
+1 0 0 1 54 651 Tm
+(3. Import and normalize the internal candidate database.) Tj
+/F1 10 Tf
+1 0 0 1 54 630 Tm
+(4. Build structured matching for salary, experience, skills, role, and location.) Tj
+/F1 10 Tf
+1 0 0 1 54 609 Tm
+(5. Add email outreach first, then WhatsApp/SMS later.) Tj
+/F1 10 Tf
+1 0 0 1 54 588 Tm
+(6. Add interview scheduling after candidate readiness confirmation.) Tj
+/F2 14 Tf
+1 0 0 1 54 544 Tm
+(Final Note) Tj
+/F1 10 Tf
+1 0 0 1 54 490 Tm
+(NexusHR AI has a working foundation, but it is not yet a fully autonomous recruitment) Tj
+/F1 10 Tf
+1 0 0 1 54 475 Tm
+(platform. The correct approach is to continue in focused phases, prioritizing) Tj
+/F1 10 Tf
+1 0 0 1 54 460 Tm
+(reliability and HR workflow value before expanding features.) Tj
+/F1 8 Tf
+1 0 0 1 54 32 Tm
+(NexusHR AI - Management Summary | Page 3) Tj
+ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 7 0 R >>
+endobj
+9 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R 8 0 R] /Count 3 >>
+endobj
+10 0 obj
+<< /Type /Catalog /Pages 9 0 R >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000000154 00000 n 
+0000002251 00000 n 
+0000002387 00000 n 
+0000004198 00000 n 
+0000004334 00000 n 
+0000005508 00000 n 
+0000005644 00000 n 
+0000005713 00000 n 
+trailer
+<< /Size 11 /Root 10 0 R >>
+startxref
+5763
+%%EOF

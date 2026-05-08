@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:13-alpine
+    container_name: jobs_postgres
+    environment:
+      POSTGRES_DB: jobs_db
+      POSTGRES_USER: jobs_user
+      POSTGRES_PASSWORD: secure_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobs_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (optional - for caching)
+  redis:
+    image: redis:7-alpine
+    container_name: jobs_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # Job Scraper
+  scraper:
+    build: .
+    container_name: job_scraper
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://jobs_user:secure_password@postgres:5432/jobs_db
+      REDIS_URL: redis://redis:6379/0
+      JOOBLE_API_KEY: ${JOOBLE_API_KEY}
+      ADZUNA_APP_ID: ${ADZUNA_APP_ID}
+      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY}
+      INDEED_PUBLISHER_ID: ${INDEED_PUBLISHER_ID}
+      LOG_LEVEL: INFO
+      SCRAPER_SCHEDULE_HOURS: 6
+    volumes:
+      - ./logs:/app/logs
+      - ./scrapers:/app/scrapers
+      - ./pipeline:/app/pipeline
+    restart: unless-stopped
+
+  # One-time scraper run (optional)
+  scraper-once:
+    build: .
+    container_name: job_scraper_once
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://jobs_user:secure_password@postgres:5432/jobs_db
+      JOOBLE_API_KEY: ${JOOBLE_API_KEY}
+      ADZUNA_APP_ID: ${ADZUNA_APP_ID}
+      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY}
+    command: python run_scrapers.py
+    volumes:
+      - ./logs:/app/logs
+    profiles:
+      - manual  # Only run with: docker-compose --profile manual up scraper-once
+
+volumes:
+  postgres_data:
+  redis_data:

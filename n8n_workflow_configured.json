@@ -1,0 +1,184 @@
+{
+    "name": "AI-Powered Candidate Sourcing - CONFIGURED",
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "bb438eee-69e9-40c4-ac24-d5437c6c49ee",
+            "name": "When clicking 'Test workflow'",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                1008,
+                328
+            ]
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "id-1",
+                            "name": "serperApiKey",
+                            "value": "7d9960e190bceaa3baeeb0662ff7e0c05ed170d6",
+                            "type": "string"
+                        },
+                        {
+                            "id": "id-2",
+                            "name": "companyName",
+                            "value": "Nexus HR AI",
+                            "type": "string"
+                        },
+                        {
+                            "id": "id-3",
+                            "name": "recruiterName",
+                            "value": "HR Team",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "includeOtherFields": true,
+                "options": {}
+            },
+            "id": "29f811e7-9fac-4729-b37e-a9a3d30b21de",
+            "name": "Workflow Configuration",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                1232,
+                328
+            ]
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "id-1",
+                            "name": "role",
+                            "value": "Senior Backend Engineer",
+                            "type": "string"
+                        },
+                        {
+                            "id": "id-2",
+                            "name": "skills",
+                            "value": "Node.js, Python, AWS, Docker, Kubernetes",
+                            "type": "string"
+                        },
+                        {
+                            "id": "id-3",
+                            "name": "experience",
+                            "value": "5+",
+                            "type": "string"
+                        },
+                        {
+                            "id": "id-4",
+                            "name": "location",
+                            "value": "Remote",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "includeOtherFields": true,
+                "options": {}
+            },
+            "id": "e6929b0b-295a-41f0-9d13-91441a018fd7",
+            "name": "Job Input Details",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                1456,
+                328
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "appendOrUpdate",
+                "documentId": {
+                    "__rl": true,
+                    "mode": "id",
+                    "value": "1TE8Sdj6yJG7k1bE2iBPEiQoAln5dMOe3g1VAE3bhlR0"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "mode": "name",
+                    "value": "Candidates"
+                },
+                "columns": {
+                    "mappingMode": "autoMapInputData",
+                    "value": {},
+                    "matchingColumns": [
+                        "name"
+                    ],
+                    "schema": []
+                },
+                "options": {}
+            },
+            "id": "2afa75a5-68f7-426e-8370-553f66109350",
+            "name": "Store Candidates",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.7,
+            "position": [
+                2608,
+                40
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "mode": "id",
+                    "value": "1TE8Sdj6yJG7k1bE2iBPEiQoAln5dMOe3g1VAE3bhlR0"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "mode": "name",
+                    "value": "Candidates"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "name": "={{ $json.name }}",
+                        "status": "Email Sent",
+                        "email_sent_date": "={{ $now.toISO() }}"
+                    },
+                    "matchingColumns": [
+                        "name"
+                    ],
+                    "schema": [
+                        {
+                            "id": "name",
+                            "displayName": "name",
+                            "required": false,
+                            "defaultMatch": true,
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "status",
+                            "displayName": "status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": false
+                        },
+                        {
+                            "id": "email_sent_date",
+                            "displayName": "email_sent_date",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": false
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "50374f11-8bf5-4052-94f7-953408314428",
+            "name": "Update Candidate Status",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.7,
+            "position": [
+                3408,
+                40
+            ]
+        }
+    ]
+}
