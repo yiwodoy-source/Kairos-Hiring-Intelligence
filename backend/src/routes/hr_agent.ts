@@ -365,7 +365,7 @@ router.post('/candidates', async (req, res) => {
 
         res.status(201).json(candidate);
     } catch (err: any) {
-        if (err.message?.includes('UNIQUE constraint failed')) {
+        if (err.message?.includes('UNIQUE constraint failed') || (err as any).code === '23505') {
             return res.status(409).json({ error: 'Candidate with this email already exists' });
         }
         console.error('[HR Agent] Error adding candidate:', err);
@@ -639,7 +639,7 @@ router.post('/employees', async (req, res) => {
             id: result.lastID 
         });
     } catch (err: any) {
-        if (err.message?.includes('UNIQUE constraint failed')) {
+        if (err.message?.includes('UNIQUE constraint failed') || (err as any).code === '23505') {
             return res.status(409).json({ error: 'Employee with this email already exists' });
         }
         console.error('[HR Agent] Error adding employee:', err);
@@ -1155,7 +1155,7 @@ router.post('/import', async (req, res) => {
                     if (matched) jobId = matched.id;
                 }
 
-                await db.run(`
+                const importResult = await db.run(`
                     INSERT INTO candidates (
                         job_id, first_name, last_name, email, phone, location,
                         years_experience, current_role, skills, applied_role,
@@ -1172,8 +1172,7 @@ router.post('/import', async (req, res) => {
                     'New Intake', 'Screen candidate',
                 ]);
 
-                const { n } = await db.get('SELECT changes() as n') as { n: number };
-                if (n > 0) inserted++;
+                if (importResult.changes > 0) inserted++;
                 else skipped++;
 
             } catch (rowErr: any) {

@@ -226,9 +226,14 @@ export async function markAsProcessed(messageId: string, senderEmail: string, su
 
         const db = await getDb();
         await db.run(`
-            INSERT OR REPLACE INTO processed_email_messages (
+            INSERT INTO processed_email_messages (
                 message_id, sender_email, subject, status, processed_at
             ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(message_id) DO UPDATE SET
+                sender_email = EXCLUDED.sender_email,
+                subject      = EXCLUDED.subject,
+                status       = EXCLUDED.status,
+                processed_at = CURRENT_TIMESTAMP
         `, [messageId, senderEmail, subject, status]);
     } catch (error: any) {
         logAgentActivity(`Failed to mark email ${messageId} as processed: ${error.message}`, 'ERROR');
