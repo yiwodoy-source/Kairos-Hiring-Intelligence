@@ -794,11 +794,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!getAuthToken());
   const [activeView, setActiveView] = useState<ViewType>(VIEW.DASHBOARD);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    return saved ? saved === 'dark' : true;
-  });
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const mainContentRef = useRef<HTMLDivElement>(null);

@@ -323,7 +323,7 @@ const SourcingPanel: React.FC<SourcingPanelProps> = ({
                 >
                   Select all
                 </button>
-                <span className="text-slate-300">·</span>
+                <span className="text-slate-400">·</span>
                 <button
                   onClick={() => setSelectedRoles([])}
                   className="text-[11px] text-slate-400 hover:underline"
@@ -601,7 +601,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
             <button
               onClick={onConfigureSourcing}
               disabled={triggerLoading}
-              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-slate-800 transition-colors"
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-white transition-colors"
             >
               {triggerLoading ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -614,7 +614,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
             <button
               onClick={onTrigger}
               disabled={triggerLoading}
-              className="flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-slate-800 transition-colors"
+              className="flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-white transition-colors"
             >
               {triggerLoading ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -787,8 +787,8 @@ const ActivityLog: React.FC<ActivityLogProps> = ({ logs, onRefresh, refreshing }
         {logs.length > 0 ? (
           <div className="space-y-1.5">
             {logs.map((log, index) => (
-              <p key={index} className="leading-5 text-slate-300">
-                <span className="mr-2 text-slate-500">[{index}]</span>
+              <p key={index} className="leading-5 text-slate-600">
+                <span className="mr-2 text-slate-400">[{index}]</span>
                 {log}
               </p>
             ))}

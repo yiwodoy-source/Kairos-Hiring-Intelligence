@@ -143,7 +143,7 @@ const JobCard = React.memo<JobCardProps>(({ job, candidates, onToggleStatus, onD
             {job.department}
             {job.location && (
               <>
-                <span className="mx-1.5 text-slate-300">·</span>
+                <span className="mx-1.5 text-slate-400">·</span>
                 <span className="inline-flex items-center gap-0.5">
                   <MapPin className="w-3 h-3 inline-block" />
                   {job.location}

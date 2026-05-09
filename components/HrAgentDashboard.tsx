@@ -678,7 +678,7 @@ export function HrAgentDashboard() {
                                 Live
                             </div>
                         </div>
-                        <div className="h-[420px] overflow-y-auto rounded-xl bg-white p-4 font-mono text-xs text-slate-200">
+                        <div className="h-[420px] overflow-y-auto rounded-xl bg-white p-4 font-mono text-xs text-slate-700">
                             <div className="mb-3 flex items-center gap-2 text-slate-400">
                                 <Terminal className="h-4 w-4" />
                                 System activity log
@@ -686,8 +686,8 @@ export function HrAgentDashboard() {
                             <div className="space-y-2">
                                 {status.logs.length > 0 ? (
                                     status.logs.map((log, index) => (
-                                        <p key={index} className="leading-6 text-slate-300">
-                                            <span className="mr-2 text-slate-500">[{index}]</span>
+                                        <p key={index} className="leading-6 text-slate-600">
+                                            <span className="mr-2 text-slate-400">[{index}]</span>
                                             {log}
                                         </p>
                                     ))
