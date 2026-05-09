@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+﻿import React, { useMemo, useState, useEffect } from 'react';
 import {
   Bot,
   Users,
@@ -65,7 +65,7 @@ interface AgentDef {
    Agent Definitions
    ───────────────────────────────────────────── */
 const AGENTS: AgentDef[] = [
-  { id: 'intake',      name: 'Intake',      subtitle: 'Gmail · PDF Parser',   color: 'violet',  colorHex: '#8B5CF6', icon: Mail },
+  { id: 'intake',      name: 'Intake',      subtitle: 'Gmail · PDF Parser',   color: 'violet',  colorHex: '#E8962A', icon: Mail },
   { id: 'screener',    name: 'Screener',    subtitle: 'AI · JD Matching',     color: 'cyan',    colorHex: '#06B6D4', icon: Search },
   { id: 'sourcer',     name: 'Sourcer',     subtitle: 'Job Boards · Profiles', color: 'emerald', colorHex: '#10B981', icon: Zap },
   { id: 'outreach',    name: 'Outreach',    subtitle: 'Email · WhatsApp',     color: 'amber',   colorHex: '#F59E0B', icon: Bot },
@@ -74,7 +74,7 @@ const AGENTS: AgentDef[] = [
 ];
 
 const PIPELINE_STATUSES = [
-  { label: 'Applied',          value: CandidateStatus.APPLIED,          color: '#8B5CF6' },
+  { label: 'Applied',          value: CandidateStatus.APPLIED,          color: '#E8962A' },
   { label: 'Screening',        value: CandidateStatus.SCREENING,        color: '#06B6D4' },
   { label: 'Review Required',  value: CandidateStatus.REVIEW_REQUIRED,  color: '#F59E0B' },
   { label: 'Shortlisted',      value: CandidateStatus.SHORTLISTED,      color: '#10B981' },
@@ -88,7 +88,7 @@ const PIPELINE_STATUSES = [
 function StatusPill({ state }: { state: AgentRunState }) {
   if (state === 'Running') {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-semibold text-emerald-700">
         <span className="status-dot" />
         Running
       </span>
@@ -96,14 +96,14 @@ function StatusPill({ state }: { state: AgentRunState }) {
   }
   if (state === 'Error') {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 px-2 py-0.5 text-xs font-semibold text-red-700 dark:text-red-400">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-xs font-semibold text-red-600">
         <span className="status-dot status-dot--error" />
         Error
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-500">
       <span className="status-dot status-dot--idle" />
       Idle
     </span>
@@ -113,10 +113,10 @@ function StatusPill({ state }: { state: AgentRunState }) {
 function AgentCardSkeleton() {
   return (
     <div className="agent-card min-w-[140px] flex-1 animate-pulse">
-      <div className="h-8 w-8 rounded-lg bg-slate-200 dark:bg-slate-700 mb-3" />
-      <div className="h-3 w-20 rounded bg-slate-200 dark:bg-slate-700 mb-2" />
-      <div className="h-2 w-16 rounded bg-slate-100 dark:bg-slate-800 mb-3" />
-      <div className="h-5 w-14 rounded-full bg-slate-100 dark:bg-slate-800" />
+      <div className="h-8 w-8 rounded-lg bg-slate-200 mb-3" />
+      <div className="h-3 w-20 rounded bg-slate-200 mb-2" />
+      <div className="h-2 w-16 rounded bg-slate-100 mb-3" />
+      <div className="h-5 w-14 rounded-full bg-slate-100" />
     </div>
   );
 }
@@ -131,7 +131,7 @@ function AgentCard({ agent, state, activity }: AgentCardProps) {
   const Icon = agent.icon;
   return (
     <div
-      className="agent-card min-w-[140px] flex-1 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
+      className="agent-card min-w-[140px] flex-1"
       style={{ borderTop: `3px solid ${agent.colorHex}` }}
     >
       <div
@@ -140,14 +140,14 @@ function AgentCard({ agent, state, activity }: AgentCardProps) {
       >
         <Icon size={18} style={{ color: agent.colorHex }} />
       </div>
-      <p className="text-sm font-semibold text-slate-900 dark:text-white leading-tight">
+      <p className="text-sm font-semibold leading-tight" style={{ color: '#0F1E38', fontFamily: '"Plus Jakarta Sans", sans-serif' }}>
         {agent.name}
       </p>
-      <p className="mt-0.5 mb-3 text-xs text-slate-400 dark:text-slate-500 leading-tight">
+      <p className="mt-0.5 mb-3 text-xs text-slate-400 leading-tight">
         {agent.subtitle}
       </p>
       <StatusPill state={state} />
-      <p className="mt-2 text-xs text-slate-400 dark:text-slate-500 truncate leading-tight">
+      <p className="mt-2 text-xs text-slate-400 truncate leading-tight">
         {activity}
       </p>
     </div>
@@ -164,7 +164,7 @@ interface KpiCardProps {
 
 function KpiCard({ label, value, icon: Icon, tint, sub }: KpiCardProps) {
   return (
-    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex items-start gap-4 animate-slide-up">
+    <div className="rounded-2xl bg-white p-5 flex items-start gap-4 animate-slide-up" style={{ border: '1px solid #E4E9F0', boxShadow: '0 1px 3px 0 rgba(15,30,56,0.06)' }}>
       <div
         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl"
         style={{ backgroundColor: `${tint}18` }}
@@ -172,14 +172,14 @@ function KpiCard({ label, value, icon: Icon, tint, sub }: KpiCardProps) {
         <Icon size={20} style={{ color: tint }} />
       </div>
       <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
           {label}
         </p>
-        <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white leading-none">
+        <p className="mt-1 text-2xl font-bold leading-none" style={{ color: '#0F1E38', fontFamily: '"Plus Jakarta Sans", sans-serif' }}>
           {value}
         </p>
         {sub && (
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{sub}</p>
+          <p className="mt-1 text-xs text-slate-400">{sub}</p>
         )}
       </div>
     </div>
@@ -194,13 +194,9 @@ interface CustomTooltipProps {
 function PipelineTooltip({ active, payload }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 shadow-lg text-xs">
-      <p className="font-semibold text-slate-900 dark:text-white">
-        {payload[0].payload.label}
-      </p>
-      <p className="text-slate-500 dark:text-slate-400 mt-0.5">
-        {payload[0].value} candidate{payload[0].value !== 1 ? 's' : ''}
-      </p>
+    <div className="rounded-lg bg-white px-3 py-2 text-xs" style={{ border: '1px solid #E4E9F0', boxShadow: '0 4px 12px rgba(15,30,56,0.10)' }}>
+      <p className="font-semibold" style={{ color: '#0F1E38' }}>{payload[0].payload.label}</p>
+      <p className="text-slate-500 mt-0.5">{payload[0].value} candidate{payload[0].value !== 1 ? 's' : ''}</p>
     </div>
   );
 }
@@ -292,13 +288,13 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
     return raw.slice(-8).reverse();
   }, [agentStatus]);
 
-  const logDotColors = ['#8B5CF6', '#06B6D4', '#10B981', '#F59E0B', '#EC4899', '#6366F1', '#8B5CF6', '#06B6D4'];
+  const logDotColors = ['#E8962A', '#0F1E38', '#10B981', '#3D6B9E', '#F0AA4F', '#059669', '#E8962A', '#0F1E38'];
 
   return (
     <div className="space-y-6 animate-fade-in">
       {/* ── Section 1: Agent Pipeline Flow ── */}
       <section>
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
           Agent pipeline
         </h2>
 
@@ -309,7 +305,7 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
                 <AgentCardSkeleton />
                 {a.id !== 'coordinator' && (
                   <div className="flex items-center self-center shrink-0 mt-[-18px]">
-                    <ArrowRight size={14} className="text-slate-300 dark:text-slate-600" />
+                    <ArrowRight size={14} className="text-slate-300" />
                   </div>
                 )}
               </React.Fragment>
@@ -324,7 +320,7 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
                   <AgentCard agent={agent} state={info.state} activity={info.activity} />
                   {idx < AGENTS.length - 1 && (
                     <div className="flex items-center self-center shrink-0 mt-[-18px]">
-                      <ArrowRight size={14} className="text-slate-300 dark:text-slate-600" />
+                      <ArrowRight size={14} className="text-slate-300" />
                     </div>
                   )}
                 </React.Fragment>
@@ -336,7 +332,7 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
 
       {/* ── Section 2: KPI Cards ── */}
       <section>
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
           Overview
         </h2>
         <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -344,7 +340,7 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
             label="Total Candidates"
             value={kpis.total}
             icon={Users}
-            tint="#8B5CF6"
+            tint="#E8962A"
             sub="all time"
           />
           <KpiCard
@@ -358,7 +354,7 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
             label="Avg Fit Score"
             value={kpis.avgScore > 0 ? `${kpis.avgScore}%` : '—'}
             icon={TrendingUp}
-            tint="#7c3aed"
+            tint="#E8962A"
             sub="AI match score"
           />
           <KpiCard
@@ -375,18 +371,18 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
       <section>
         <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
           {/* Left: Hiring Pipeline Funnel */}
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+          <div className="rounded-2xl bg-white p-5" style={{ border: '1px solid #E4E9F0', boxShadow: '0 1px 3px 0 rgba(15,30,56,0.06)' }}>
             <div className="mb-1 flex items-center justify-between">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Candidate pipeline distribution
               </h2>
-              <span className="text-xs text-slate-400 dark:text-slate-500">
+              <span className="text-xs text-slate-400">
                 {candidates.length} total
               </span>
             </div>
 
             {candidates.length === 0 ? (
-              <div className="flex h-52 flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500">
+              <div className="flex h-52 flex-col items-center justify-center gap-2 text-slate-400">
                 <Users size={32} className="opacity-30" />
                 <p className="text-sm">No candidate data yet.</p>
               </div>
@@ -427,13 +423,13 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
           </div>
 
           {/* Right: Live Activity Feed */}
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col">
+          <div className="rounded-2xl bg-white p-5 flex flex-col" style={{ border: '1px solid #E4E9F0', boxShadow: '0 1px 3px 0 rgba(15,30,56,0.06)' }}>
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Live activity
               </h2>
               {agentLoading && (
-                <Loader2 size={13} className="animate-spin text-slate-400 dark:text-slate-500" />
+                <Loader2 size={13} className="animate-spin text-slate-400" />
               )}
             </div>
 
@@ -441,18 +437,18 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
               <div className="flex flex-1 flex-col gap-3">
                 {Array.from({ length: 5 }).map((_, i) => (
                   <div key={i} className="flex items-start gap-3 animate-pulse">
-                    <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-slate-200" />
                     <div className="flex-1 space-y-1">
-                      <div className="h-2.5 w-full rounded bg-slate-100 dark:bg-slate-800" />
-                      <div className="h-2 w-2/3 rounded bg-slate-100 dark:bg-slate-800" />
+                      <div className="h-2.5 w-full rounded bg-slate-100" />
+                      <div className="h-2 w-2/3 rounded bg-slate-100" />
                     </div>
                   </div>
                 ))}
               </div>
             ) : logEntries.length === 0 ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center px-4">
-                <Activity size={28} className="text-slate-300 dark:text-slate-600" />
-                <p className="text-sm text-slate-400 dark:text-slate-500 leading-relaxed">
+                <Activity size={28} className="text-slate-300" />
+                <p className="text-sm text-slate-400 leading-relaxed">
                   No agent activity yet. Start the intake scheduler to begin processing.
                 </p>
               </div>
@@ -465,10 +461,10 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
                       style={{ backgroundColor: logDotColors[i % logDotColors.length] }}
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed line-clamp-2">
+                      <p className="text-xs leading-relaxed line-clamp-2" style={{ color: '#374151' }}>
                         {entry}
                       </p>
-                      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+                      <p className="mt-0.5 text-xs text-slate-400">
                         {i === 0 ? 'now' : 'recently'}
                       </p>
                     </div>

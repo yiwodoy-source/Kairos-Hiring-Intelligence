@@ -21,6 +21,7 @@ export const verifyToken = (req: AuthRequest, res: Response, next: NextFunction)
 
     try {
         const decoded = jwt.verify(token, getJwtSecret(), {
+            algorithms: ['HS256'],
             issuer: 'nexus-hr-backend',
             audience: 'nexus-hr-frontend',
         }) as JwtPayload;

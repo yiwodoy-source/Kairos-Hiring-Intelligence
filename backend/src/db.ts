@@ -60,7 +60,26 @@ async function initializeSQLite(): Promise<DbAdapter> {
     await sqliteDb.exec('PRAGMA busy_timeout = 5000;');
 
     await createTablesSQLite(sqliteDb);
-    const adapter = sqliteDb as unknown as DbAdapter;
+
+    const base = sqliteDb as unknown as DbAdapter;
+    const adapter: DbAdapter = {
+        get: base.get.bind(base),
+        all: base.all.bind(base),
+        run: base.run.bind(base),
+        exec: base.exec.bind(base),
+        async transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T> {
+            await sqliteDb.run('BEGIN');
+            try {
+                const result = await fn(adapter);
+                await sqliteDb.run('COMMIT');
+                return result;
+            } catch (err) {
+                await sqliteDb.run('ROLLBACK');
+                throw err;
+            }
+        },
+    };
+
     await seedDatabase(adapter, false);
 
     console.log('[DB:sqlite] Schema ready');
@@ -166,6 +185,12 @@ async function createTablesSQLite(sqliteDb: any) {
             metadata TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     `);
 
@@ -278,6 +303,14 @@ async function createTablesPostgres(db: DbAdapter) {
             metadata TEXT,
             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         )
     `);
 

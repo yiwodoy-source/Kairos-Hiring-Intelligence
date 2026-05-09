@@ -13,6 +13,7 @@ export interface DbAdapter {
     all<T = any>(sql: string, params?: any): Promise<T[]>;
     run(sql: string, params?: any): Promise<RunResult>;
     exec(sql: string): Promise<void>;
+    transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T>;
 }
 
 function getPool(): Pool {
@@ -28,9 +29,10 @@ function getPool(): Pool {
         connectionTimeoutMillis: 10000,
     };
 
-    // Supabase requires SSL; skip cert verification for self-signed certs
-    if (url.includes('supabase.co') || url.includes('pooler.supabase.com')) {
-        cfg.ssl = { rejectUnauthorized: false };
+    // Supabase and other hosted Postgres providers use valid TLS certs —
+    // enable SSL with full certificate verification.
+    if (url.includes('supabase.co') || url.includes('pooler.supabase.com') || url.startsWith('postgresql://') || url.startsWith('postgres://')) {
+        cfg.ssl = { rejectUnauthorized: true };
     }
 
     pool = new Pool(cfg);
@@ -98,6 +100,47 @@ export function createPostgresAdapter(): DbAdapter {
 
             for (const stmt of statements) {
                 await getPool().query(stmt);
+            }
+        },
+
+        async transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T> {
+            const client = await getPool().connect();
+            try {
+                await client.query('BEGIN');
+                const txAdapter: DbAdapter = {
+                    async get<U>(sql: string, params?: any): Promise<U | undefined> {
+                        const result = await client.query(convertPlaceholders(sql), normalizeParams(params));
+                        return result.rows[0] as U | undefined;
+                    },
+                    async all<U>(sql: string, params?: any): Promise<U[]> {
+                        const result = await client.query(convertPlaceholders(sql), normalizeParams(params));
+                        return result.rows as U[];
+                    },
+                    async run(sql: string, params?: any): Promise<RunResult> {
+                        let pgSql = convertPlaceholders(sql);
+                        const isInsert = /^\s*INSERT\b/i.test(pgSql);
+                        if (isInsert && !/RETURNING\b/i.test(pgSql)) {
+                            pgSql = pgSql.trimEnd().replace(/;?\s*$/, '') + ' RETURNING id';
+                        }
+                        const result = await client.query(pgSql, normalizeParams(params));
+                        return { lastID: isInsert ? (result.rows[0]?.id as number | undefined) : undefined, changes: result.rowCount ?? 0 };
+                    },
+                    async exec(sql: string): Promise<void> {
+                        const statements = sql.split(/;\s*(?=\S)/).map((s) => s.trim()).filter(Boolean);
+                        for (const stmt of statements) await client.query(stmt);
+                    },
+                    transaction<V>(fn2: (db: DbAdapter) => Promise<V>): Promise<V> {
+                        return fn2(txAdapter); // nested — reuse same client/transaction
+                    },
+                };
+                const result = await fn(txAdapter);
+                await client.query('COMMIT');
+                return result;
+            } catch (err) {
+                await client.query('ROLLBACK');
+                throw err;
+            } finally {
+                client.release();
             }
         },
     };

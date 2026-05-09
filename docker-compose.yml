@@ -1,0 +1,44 @@
+services:
+
+  # ── Backend (Express + TypeScript) ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env          # copy backend/.env.example → backend/.env and fill in
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+    ports:
+      - "3001:3001"             # remove in production — let nginx proxy handle traffic
+    volumes:
+      - nexus_data:/app/data    # SQLite database
+      - nexus_logs:/app/logs    # Agent activity logs
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── Frontend (Vite → nginx) ─────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # At build time, tells the SPA where to reach the API.
+        # In docker-compose this is proxied through nginx → backend container.
+        VITE_API_URL: ""        # leave empty — nginx proxies /api/ to backend
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  nexus_data:
+  nexus_logs:

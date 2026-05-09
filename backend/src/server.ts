@@ -9,7 +9,10 @@ import integrationRoutes from './routes/integrations';
 import openClawRoutes from './routes/openclaw';
 import { verifyToken } from './middleware/authMiddleware';
 import { bootstrap } from './core/container';
-import { initializeAgent } from './services/hr_agent/scheduler';
+import { initializeAgent, getAgentStatus } from './services/hr_agent/scheduler';
+import { loadTokenFromDb } from './services/hr_agent/google_client';
+import { getDb } from './db';
+import { log } from './lib/logger';
 
 // Application configuration
 const PORT: number = parseInt(process.env.PORT || '3001', 10);
@@ -23,8 +26,8 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", 'cdnjs.cloudflare.com'],
+      styleSrc: ["'self'", "'unsafe-inline'"], // inline styles kept for email HTML responses
+      scriptSrc: ["'self'"],                   // unsafe-inline and external CDN removed
       imgSrc: ["'self'", 'data:', 'https:'],
     },
   },
@@ -43,15 +46,15 @@ const authLimiter = rateLimit({
 
 // CORS configuration
 app.use((req, res, next) => {
-  const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',');
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3003,http://localhost:5173,http://localhost:3000').split(',');
   const origin = req.headers.origin;
 
   if (origin && allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
-  } else if (NODE_ENV === 'production') {
-    res.header('Access-Control-Allow-Origin', allowedOrigins[0] || '');
   } else {
-    res.header('Access-Control-Allow-Origin', origin || '*');
+    // Never fall back to wildcard — use the primary configured origin.
+    // Unknown origins receive no ACAO header and are blocked by the browser.
+    res.header('Access-Control-Allow-Origin', allowedOrigins[0] || '');
   }
 
   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,PATCH,OPTIONS');
@@ -66,7 +69,7 @@ app.use((req, res, next) => {
 
 // Request logging
 app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  log.info('request', { method: req.method, url: req.originalUrl });
   next();
 });
 
@@ -78,19 +81,34 @@ app.use('/api/ai', verifyToken, aiRoutes);
 app.use('/api/integrations', verifyToken, integrationRoutes);
 app.use('/api/openclaw', verifyToken, openClawRoutes);
 app.use('/api/hr-agent', (req, res, next) => {
-  if (req.path === '/auth/callback') {
+  // Public paths: OAuth callback and candidate unsubscribe link
+  if (req.path === '/auth/callback' || req.path === '/unsubscribe') {
     return next();
   }
   return verifyToken(req, res, next);
 }, hrAgentRoutes);
 
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ 
-    status: 'ok', 
+// Health check — verifies DB connectivity and agent state
+app.get('/api/health', async (_req, res) => {
+  let dbOk = false;
+  try {
+    const db = await getDb();
+    await db.get('SELECT 1');
+    dbOk = true;
+  } catch { /* db unreachable */ }
+
+  const agentStatus = getAgentStatus();
+  const healthy = dbOk;
+
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage().rss / 1024 / 1024
+    uptime: Math.round(process.uptime()),
+    memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    subsystems: {
+      database: dbOk ? 'ok' : 'unreachable',
+      agent: agentStatus.status,
+    },
   });
 });
 
@@ -100,33 +118,43 @@ app.use((req, res) => {
 });
 
 // Global error handler
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('[ERROR]', err);
-  res.status(500).json({ 
-    success: false, 
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  log.error('unhandled error', { url: req.originalUrl, error: err.message, stack: err.stack });
+  res.status(500).json({
+    success: false,
     message: 'Internal server error',
-    ...(NODE_ENV === 'development' && { error: err.message })
+    ...(NODE_ENV === 'development' && { error: err.message }),
   });
 });
 
-// Start server
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[SERVER] Running on port ${PORT} [${NODE_ENV}]`);
-  initializeAgent();
+// Start server — initialize agent before accepting traffic
+const server = app.listen(PORT, '0.0.0.0', async () => {
+  log.info('server started', { port: PORT, env: NODE_ENV });
+  try {
+    await loadTokenFromDb();
+    log.info('google token loaded');
+  } catch (err: any) {
+    log.warn('google token load skipped', { error: err.message });
+  }
+  try {
+    await initializeAgent();
+    log.info('agent initialized');
+  } catch (err: any) {
+    log.error('agent initialization failed', { error: err.message });
+  }
 });
 
 // Graceful shutdown
 const gracefulShutdown = async (signal: string) => {
-  console.log(`[SERVER] ${signal} received, shutting down...`);
-  
+  log.info('shutdown signal received', { signal });
+
   server.close(async () => {
-    console.log('[SERVER] HTTP server closed');
+    log.info('http server closed');
     process.exit(0);
   });
 
-  // Force shutdown after timeout
   setTimeout(() => {
-    console.error('[SERVER] Force shutdown after timeout');
+    log.error('force shutdown after timeout');
     process.exit(1);
   }, 30000);
 };

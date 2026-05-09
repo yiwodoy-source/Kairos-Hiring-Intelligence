@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+﻿import React, { useCallback, useRef, useState } from 'react';
 import {
   X,
   Upload,
@@ -166,31 +166,31 @@ function PreviewTable({ rows }: { rows: ParsedCandidate[] }) {
   const preview = rows.slice(0, 3);
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+    <div className="overflow-x-auto rounded-xl border border-slate-200">
       <table className="w-full text-xs">
         <thead>
-          <tr className="bg-slate-50 dark:bg-slate-800">
+          <tr className="bg-slate-50">
             {PREVIEW_COLUMNS.map((col) => (
               <th
                 key={col.key}
-                className="px-3 py-2 text-left font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap"
+                className="px-3 py-2 text-left font-semibold text-slate-500 whitespace-nowrap"
               >
                 {col.label}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        <tbody className="divide-y divide-slate-100">
           {preview.map((row, i) => (
-            <tr key={i} className="bg-white dark:bg-slate-900">
+            <tr key={i} className="bg-white">
               {PREVIEW_COLUMNS.map((col) => (
                 <td
                   key={col.key}
-                  className="px-3 py-2 text-slate-700 dark:text-slate-300 max-w-[140px] truncate"
+                  className="px-3 py-2 text-slate-700 max-w-[140px] truncate"
                   title={row[col.key]}
                 >
                   {row[col.key] || (
-                    <span className="text-slate-400 dark:text-slate-600 italic">—</span>
+                    <span className="text-slate-400 italic">—</span>
                   )}
                 </td>
               ))}
@@ -297,24 +297,24 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
   // ---- Render ----
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-2xl flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-100 dark:border-slate-800 flex-shrink-0">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-100 flex-shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
-              <FileText className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+            <div className="w-8 h-8 rounded-xl bg-amber-50 flex items-center justify-center">
+              <FileText className="w-4 h-4 text-amber-600" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">
+              <h2 className="text-base font-bold text-slate-800">
                 Import Candidates
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Bulk CSV import</p>
+              <p className="text-xs text-slate-500">Bulk CSV import</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
             aria-label="Close"
           >
             <X className="w-4 h-4" />
@@ -334,8 +334,8 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
                 onClick={() => fileInputRef.current?.click()}
                 className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
                   isDragging
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/20'
-                    : 'border-slate-300 dark:border-slate-700 hover:border-violet-400 dark:hover:border-violet-500'
+                    ? 'border-amber-500 bg-amber-50'
+                    : 'border-slate-300 hover:border-violet-400'
                 }`}
               >
                 <input
@@ -347,24 +347,24 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
                 />
                 <Upload
                   className={`w-8 h-8 mx-auto mb-3 ${
-                    isDragging ? 'text-violet-500' : 'text-slate-400 dark:text-slate-500'
+                    isDragging ? 'text-amber-500' : 'text-slate-400'
                   }`}
                 />
                 {fileName ? (
                   <>
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    <p className="text-sm font-semibold text-slate-700">
                       {fileName}
                     </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    <p className="text-xs text-slate-500 mt-1">
                       Click to change file
                     </p>
                   </>
                 ) : (
                   <>
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    <p className="text-sm font-semibold text-slate-700">
                       Drop a CSV file here
                     </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    <p className="text-xs text-slate-500 mt-1">
                       or click to browse — .csv files only
                     </p>
                   </>
@@ -373,9 +373,9 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
 
               {/* Parse error */}
               {parseError && (
-                <div className="flex items-start gap-2 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 px-4 py-3">
+                <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
                   <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-red-700 dark:text-red-300">{parseError}</p>
+                  <p className="text-sm text-red-700">{parseError}</p>
                 </div>
               )}
 
@@ -384,11 +384,11 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    <span className="text-sm font-semibold text-slate-700">
                       {parsedRows.length} row{parsedRows.length !== 1 ? 's' : ''} detected
                     </span>
                     {parsedRows.length > 3 && (
-                      <span className="text-xs text-slate-400 dark:text-slate-500">
+                      <span className="text-xs text-slate-400">
                         (showing first 3 below)
                       </span>
                     )}
@@ -398,14 +398,14 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
               )}
 
               {/* Expected columns helper */}
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-4">
-                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2 flex items-center gap-1.5">
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+                <p className="text-xs font-semibold text-slate-600 mb-2 flex items-center gap-1.5">
                   <ChevronRight className="w-3.5 h-3.5" />
                   Expected CSV columns
                 </p>
-                <p className="text-xs font-mono text-slate-500 dark:text-slate-400 break-all leading-relaxed">
+                <p className="text-xs font-mono text-slate-500 break-all leading-relaxed">
                   first_name, last_name, email, phone, current_role, applied_role,{' '}
-                  <span className="text-violet-600 dark:text-violet-400">
+                  <span className="text-amber-600">
                     skills (comma-separated, in quotes)
                   </span>
                   , years_experience, location, expected_salary, notice_period, source, company
@@ -415,7 +415,7 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
                     e.stopPropagation();
                     downloadSampleCSV();
                   }}
-                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition-colors"
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-600 hover:text-amber-700 transition-colors"
                 >
                   <Download className="w-3 h-3" />
                   Download sample CSV
@@ -427,12 +427,12 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
           {/* ---- Step: Importing ---- */}
           {step === 'importing' && (
             <div className="flex flex-col items-center justify-center py-16 gap-4">
-              <Loader2 className="w-10 h-10 text-violet-500 animate-spin" />
+              <Loader2 className="w-10 h-10 text-amber-500 animate-spin" />
               <div className="text-center">
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                <p className="text-sm font-semibold text-slate-700">
                   Importing {parsedRows.length} candidates…
                 </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                <p className="text-xs text-slate-500 mt-1">
                   This may take a moment.
                 </p>
               </div>
@@ -443,14 +443,14 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
           {step === 'result' && importResult && (
             <div className="space-y-4">
               {/* Success summary */}
-              <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-4 flex items-start gap-3">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 flex items-start gap-3">
                 <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">
+                  <p className="text-sm font-bold text-emerald-700">
                     {importResult.inserted} candidate{importResult.inserted !== 1 ? 's' : ''} imported
                   </p>
                   {importResult.duplicates > 0 && (
-                    <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">
+                    <p className="text-xs text-emerald-600 mt-0.5">
                       {importResult.duplicates} duplicate{importResult.duplicates !== 1 ? 's' : ''} skipped
                     </p>
                   )}
@@ -459,20 +459,20 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
 
               {/* Errors */}
               {importResult.errors.length > 0 && (
-                <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4">
-                  <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 mb-2 flex items-center gap-1.5">
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-xs font-semibold text-amber-700 mb-2 flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5" />
                     {importResult.errors.length} error{importResult.errors.length !== 1 ? 's' : ''}
                   </p>
                   <ul className="space-y-1">
                     {importResult.errors.slice(0, 10).map((err, i) => (
-                      <li key={i} className="text-xs text-amber-700 dark:text-amber-300 font-mono">
+                      <li key={i} className="text-xs text-amber-700 font-mono">
                         {err}
                       </li>
                     ))}
                   </ul>
                   {importResult.errors.length > 10 && (
-                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                    <p className="text-xs text-amber-600 mt-2">
                       …and {importResult.errors.length - 10} more
                     </p>
                   )}
@@ -483,19 +483,19 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3 flex-shrink-0">
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3 flex-shrink-0">
           {step === 'upload' && (
             <>
               <button
                 onClick={onClose}
-                className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white transition-colors"
+                className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={() => void handleImport()}
                 disabled={parsedRows.length === 0}
-                className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors"
+                className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-slate-800 rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors"
               >
                 <Upload className="w-4 h-4" />
                 Import {parsedRows.length > 0 ? `${parsedRows.length} ` : ''}Candidate{parsedRows.length !== 1 ? 's' : ''}
@@ -506,7 +506,7 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
           {step === 'importing' && (
             <button
               disabled
-              className="inline-flex items-center gap-2 bg-violet-600 opacity-60 cursor-not-allowed text-white rounded-xl px-5 py-2.5 text-sm font-semibold"
+              className="inline-flex items-center gap-2 bg-amber-500 opacity-60 cursor-not-allowed text-slate-800 rounded-xl px-5 py-2.5 text-sm font-semibold"
             >
               <Loader2 className="w-4 h-4 animate-spin" />
               Importing…
@@ -516,7 +516,7 @@ export function ImportModal({ onClose, onImported }: ImportModalProps) {
           {step === 'result' && (
             <button
               onClick={handleDone}
-              className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors"
+              className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-slate-800 rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors"
             >
               <CheckCircle2 className="w-4 h-4" />
               Done

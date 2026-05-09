@@ -1,15 +1,21 @@
 import express from 'express';
+import { verifyUnsubscribeToken } from '../services/hr_agent/email_responder';
 import { getDb } from '../db';
 import { runAgentCycle, startAgent, stopAgent, getAgentStatus } from '../services/hr_agent/scheduler';
 import { getLogs } from '../services/hr_agent/logger';
-import { getOAuth2Client } from '../services/hr_agent/google_client';
+import { getOAuth2Client, setGoogleCredentials, encryptToken } from '../services/hr_agent/google_client';
 import { exportCandidateRecord } from '../services/hr_agent/candidate_export';
 import { getInterviewAvailability, scheduleCandidateInterview } from '../services/hr_agent/interview_scheduler';
 import { sendInterviewConfirmation, sendAutomatedReply } from '../services/hr_agent/email_responder';
 import { assessCandidateAgainstJobs } from '../services/hr_agent/decision_engine';
+import { extractTextFromPdf } from '../services/hr_agent/pdf_parser';
+import { analyzeCandidateCV } from '../services/hr_agent/ai_analyzer';
 import { getLinkedInSessionStatus, writeJobsInput, runLinkedInScout, parseLinkedInOutput } from '../services/sourcer/linkedin_sourcer';
 import { sourceForRoles, ScrapeGraphCandidate } from '../services/sourcer/scrapegraph_sourcer';
+import { sourceWithFirecrawlForRoles, FirecrawlCandidate } from '../services/sourcer/firecrawl_sourcer';
 import { getScrapeGraphStatus } from '../services/integrations/scrapegraph';
+import { getMergeStatus, getMergeCandidates } from '../services/integrations/merge';
+import { getFirecrawlStatus } from '../services/integrations/firecrawl';
 
 const router = express.Router();
 
@@ -752,6 +758,55 @@ router.get('/status', async (req, res) => {
     }
 });
 
+// Notification bell — recent shortlisted/rejected candidates
+router.get('/notifications', async (_req, res) => {
+    try {
+        const db = await getDb();
+        const notifications = await db.all(`
+            SELECT id, first_name, last_name, applied_role, decision_status, overall_score, created_at
+            FROM candidates
+            WHERE decision_status IN ('Shortlisted', 'Rejected')
+            ORDER BY created_at DESC
+            LIMIT 20
+        `) as { id: number; first_name: string; last_name: string; applied_role: string; decision_status: string; overall_score: number; created_at: string }[];
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const unreadCount = notifications.filter(n => n.created_at >= since).length;
+        res.json({ notifications, unreadCount });
+    } catch (err: any) {
+        console.error('[HR Agent] Notifications error:', err);
+        res.status(500).json({ error: 'Failed to fetch notifications' });
+    }
+});
+
+// Public endpoint — no JWT required (linked from candidate emails)
+router.get('/unsubscribe', async (req, res) => {
+    const { email, token } = req.query as { email?: string; token?: string };
+    if (!email || !token || !verifyUnsubscribeToken(email, token)) {
+        return res.status(400).send(`
+            <html><body style="font-family:sans-serif;text-align:center;padding:60px">
+              <h2>Invalid or expired unsubscribe link</h2>
+              <p>This link may have expired or already been used. Please contact us directly if you wish to unsubscribe.</p>
+            </body></html>
+        `);
+    }
+    try {
+        const db = await getDb();
+        await db.run(
+            `UPDATE candidates SET communication_status = 'Opted Out' WHERE email = ?`,
+            [email.toLowerCase().trim()]
+        );
+        return res.send(`
+            <html><body style="font-family:sans-serif;text-align:center;padding:60px">
+              <h2>You have been unsubscribed</h2>
+              <p>You will no longer receive automated recruitment emails from us.</p>
+            </body></html>
+        `);
+    } catch (err: any) {
+        console.error('[HR Agent] Unsubscribe error:', err);
+        return res.status(500).send('An error occurred. Please try again later.');
+    }
+});
+
 router.get('/schedule/availability', async (req, res) => {
     try {
         const days = req.query.days ? Number(req.query.days) : undefined;
@@ -910,7 +965,7 @@ router.get('/auth/url', async (req, res) => {
     }
 });
 
-// OAuth Helper: Callback to get refresh token
+// OAuth Helper: Callback — auto-saves token to .env and live-updates the running server
 router.get('/auth/callback', async (req, res) => {
     const { code } = req.query;
 
@@ -921,41 +976,40 @@ router.get('/auth/callback', async (req, res) => {
     try {
         const oauth2Client = getOAuth2Client();
         const { tokens } = await oauth2Client.getToken(code as string);
+        const appUrl = process.env.APP_URL || 'http://127.0.0.1:3003';
 
         if (tokens.refresh_token) {
-            const escapedRefreshToken = escapeHtml(tokens.refresh_token);
-            const appUrl = process.env.APP_URL || 'http://127.0.0.1:3003';
-            res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Authorization Successful</title>
-            <style>
-                body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
-                .token-box { background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0; word-break: break-all; }
-                h1 { color: #2e7d32; }
-                .warning { color: #d32f2f; font-weight: bold; }
-            </style>
-        </head>
-        <body>
-            <h1>✅ Authorization Successful</h1>
-            <p>Your Google Refresh Token is:</p>
-            <div class="token-box">${escapedRefreshToken}</div>
-            <p class="warning">Please add this to your <b>backend/.env</b> as <code>GOOGLE_REFRESH_TOKEN</code> and restart the server.</p>
-            <p>After restarting the server, return to <a href="${escapeHtml(appUrl)}">NexusHR</a> and open the HR AI Agent screen to verify the integration.</p>
-        </body>
-        </html>
-      `);
+            // 1. Live-update the running oauth2Client — no restart needed
+            setGoogleCredentials(tokens.refresh_token);
+
+            // 2. Persist to DB (AES-256-GCM encrypted) so it survives restarts
+            try {
+                const db = await getDb();
+                const encrypted = encryptToken(tokens.refresh_token);
+                await db.run(
+                    `INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+                     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+                    ['google_refresh_token', encrypted]
+                );
+                console.log('[HR Agent] Refresh token saved to database');
+            } catch (dbErr: any) {
+                console.warn('[HR Agent] Could not persist token to database:', dbErr.message);
+            }
+
+            // 3. Redirect straight back to the app Settings page
+            res.redirect(`${appUrl}/settings?oauth=success`);
         } else {
-            res.status(400).send(`
-        <h1>Error: No refresh token received</h1>
-        <p>If you have already authorized, try revoking access at <a href="https://myaccount.google.com/permissions">Google Permissions</a> and try again.</p>
-        <p>Make sure you're using the correct Google account.</p>
-      `);
+            // Google didn't return a refresh_token — most likely already authorized before.
+            // Use the access_token to set credentials so the session still works.
+            if (tokens.access_token) {
+                oauth2Client.setCredentials(tokens);
+            }
+            res.redirect(`${appUrl}/settings?oauth=no_refresh_token`);
         }
     } catch (error: any) {
         console.error('[HR Agent] OAuth callback error:', error);
-        res.status(500).send(`<h1>Error: ${escapeHtml(error.message || 'OAuth callback failed')}</h1><p>Check server logs for details.</p>`);
+        const appUrl = process.env.APP_URL || 'http://127.0.0.1:3003';
+        res.redirect(`${appUrl}/settings?oauth=error&detail=${encodeURIComponent(error.message || 'OAuth callback failed')}`);
     }
 });
 
@@ -1031,20 +1085,19 @@ router.post('/candidates/:id/outreach', async (req, res) => {
     }
 });
 
-// Integration status — which Google services are configured
+// Integration status — live-tests Google token, reports real connection health
 router.get('/integration-status', async (_req, res) => {
     try {
         const hasClientId = Boolean(process.env.GOOGLE_CLIENT_ID);
         const hasClientSecret = Boolean(process.env.GOOGLE_CLIENT_SECRET);
         const hasRefreshToken = Boolean(process.env.GOOGLE_REFRESH_TOKEN);
         const oauthConfigured = hasClientId && hasClientSecret;
-        const connected = oauthConfigured && hasRefreshToken;
 
+        // Always generate an auth URL so the UI can offer re-authorization
         let authUrl: string | null = null;
-        if (oauthConfigured && !hasRefreshToken) {
+        if (oauthConfigured) {
             try {
-                const oauth2Client = getOAuth2Client();
-                authUrl = oauth2Client.generateAuthUrl({
+                authUrl = getOAuth2Client().generateAuthUrl({
                     access_type: 'offline',
                     prompt: 'consent',
                     scope: [
@@ -1057,10 +1110,32 @@ router.get('/integration-status', async (_req, res) => {
             } catch { /* oauth2Client unavailable */ }
         }
 
+        // Live-test the token — don't trust env vars alone
+        let tokenValid = false;
+        let tokenError: string | null = null;
+        if (oauthConfigured && hasRefreshToken) {
+            try {
+                const gmail = (await import('../services/hr_agent/google_client')).getGmailClient();
+                await gmail.users.getProfile({ userId: 'me' });
+                tokenValid = true;
+            } catch (err: any) {
+                const msg: string = err?.response?.data?.error || err?.message || 'unknown';
+                tokenError = msg.includes('invalid_grant')
+                    ? 'Refresh token expired or revoked — re-authorization required.'
+                    : msg.includes('invalid_client')
+                    ? 'OAuth client credentials are invalid.'
+                    : msg;
+            }
+        }
+
+        const connected = tokenValid;
+
         res.json({
             google: {
                 oauthConfigured,
                 connected,
+                tokenValid,
+                tokenError,
                 gmail: connected,
                 drive: connected,
                 sheets: connected,
@@ -1375,103 +1450,141 @@ router.post('/trigger/screener', async (_req, res) => {
     }
 });
 
-// Sourcer — source candidates from ScrapeGraphAI and/or LinkedIn Scout
-router.post('/trigger/sourcer', async (_req, res) => {
+// Sourcer — source candidates from ScrapeGraphAI, LinkedIn Scout, and Merge.dev; AI-assess every import
+router.post('/trigger/sourcer', async (req, res) => {
     try {
+        const { roles: roleFilter, limitsPerSource } = (req.body ?? {}) as { roles?: string[]; limitsPerSource?: number };
+        const perRoleLimit = (typeof limitsPerSource === 'number' && limitsPerSource > 0) ? limitsPerSource : 5;
+
         const db = await getDb();
-        const openJobs = await db.all(`SELECT id, title FROM jobs WHERE status = 'Open' LIMIT 10`) as { id: number; title: string }[];
+        let openJobs = await db.all(
+            `SELECT id, title, location, description, requirements, status FROM jobs WHERE status = 'Open' LIMIT 20`
+        ) as OpenJob[];
+
+        if (Array.isArray(roleFilter) && roleFilter.length > 0) {
+            openJobs = openJobs.filter(j => roleFilter.includes(j.title));
+        }
 
         if (openJobs.length === 0) {
             return res.json({ success: true, message: 'No open jobs to source candidates for.', imported: 0 });
         }
 
-        const jobsForScouting = openJobs.map(j => ({ title: j.title, limit: 5 }));
+        const jobsForScouting = openJobs.map(j => ({ title: j.title, limit: perRoleLimit }));
         const sgStatus = getScrapeGraphStatus();
+        const fcStatus = getFirecrawlStatus();
         const liStatus = getLinkedInSessionStatus();
+        const mergeStatus = getMergeStatus();
 
-        const summary: {
-            source: string;
-            role: string;
-            found: number;
-            imported: number;
-            error?: string;
-        }[] = [];
+        type SummaryRow = { source: string; role: string; found: number; imported: number; shortlisted: number; review: number; rejected: number; error?: string };
+        const summary: SummaryRow[] = [];
 
-        // ── ScrapeGraphAI path ────────────────────────────────────────────
-        if (sgStatus.configured) {
-            console.log('[Sourcer] Running ScrapeGraphAI sourcing for', openJobs.length, 'roles...');
-            const sgResults = await sourceForRoles(jobsForScouting);
-
-            for (const { role, candidates, error } of sgResults) {
-                if (error) {
-                    summary.push({ source: 'ScrapeGraphAI', role, found: 0, imported: 0, error });
-                    continue;
-                }
-                let imported = 0;
+        // ── Firecrawl ─────────────────────────────────────────────────────
+        if (fcStatus.configured) {
+            console.log('[Sourcer] Firecrawl: sourcing', openJobs.length, 'roles...');
+            const fcResults = await sourceWithFirecrawlForRoles(jobsForScouting);
+            for (const { role, candidates, error } of fcResults) {
+                if (error) { summary.push({ source: 'Firecrawl', role, found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error }); continue; }
+                let imported = 0, shortlisted = 0, review = 0, rejected = 0;
                 for (const c of candidates) {
                     try {
-                        const imp = await importScrapeGraphCandidate(db, c);
-                        if (imp) imported++;
-                    } catch { /* skip duplicates */ }
+                        const r = await importFirecrawlCandidate(db, c, openJobs);
+                        if (r.imported) { imported++; if (r.status === 'Shortlisted') shortlisted++; else if (r.status === 'Rejected') rejected++; else review++; }
+                    } catch { /* skip */ }
                 }
-                summary.push({ source: 'ScrapeGraphAI', role, found: candidates.length, imported });
+                summary.push({ source: 'Firecrawl', role, found: candidates.length, imported, shortlisted, review, rejected });
             }
         }
 
-        // ── LinkedIn Scout path ───────────────────────────────────────────
+        // ── ScrapeGraphAI ─────────────────────────────────────────────────
+        if (sgStatus.configured) {
+            console.log('[Sourcer] ScrapeGraphAI: sourcing', openJobs.length, 'roles...');
+            const sgResults = await sourceForRoles(jobsForScouting);
+            for (const { role, candidates, error } of sgResults) {
+                if (error) { summary.push({ source: 'ScrapeGraph', role, found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error }); continue; }
+                let imported = 0, shortlisted = 0, review = 0, rejected = 0;
+                for (const c of candidates) {
+                    try {
+                        const r = await importScrapeGraphCandidate(db, c, openJobs);
+                        if (r.imported) { imported++; if (r.status === 'Shortlisted') shortlisted++; else if (r.status === 'Rejected') rejected++; else review++; }
+                    } catch { /* skip */ }
+                }
+                summary.push({ source: 'ScrapeGraph', role, found: candidates.length, imported, shortlisted, review, rejected });
+            }
+        }
+
+        // ── LinkedIn Scout ────────────────────────────────────────────────
         if (liStatus.hasSession && liStatus.scriptExists) {
-            console.log('[Sourcer] LinkedIn session found — running LinkedIn Scout...');
+            console.log('[Sourcer] LinkedIn Scout: running Playwright scout...');
             try {
                 await writeJobsInput(jobsForScouting);
                 const result = await runLinkedInScout();
-
                 if (result.success && result.outputFile) {
                     const liCandidates = await parseLinkedInOutput(result.outputFile);
-                    let imported = 0;
+                    let imported = 0, shortlisted = 0, review = 0, rejected = 0;
                     for (const c of liCandidates) {
                         try {
-                            const imp = await importLinkedInCandidate(db, c);
-                            if (imp) imported++;
-                        } catch { /* skip duplicates */ }
+                            const r = await importLinkedInCandidate(db, c, openJobs);
+                            if (r.imported) { imported++; if (r.status === 'Shortlisted') shortlisted++; else if (r.status === 'Rejected') rejected++; else review++; }
+                        } catch { /* skip */ }
                     }
-                    summary.push({
-                        source: 'LinkedIn',
-                        role: 'All roles',
-                        found: liCandidates.length,
-                        imported,
-                    });
+                    summary.push({ source: 'LinkedIn', role: 'All roles', found: liCandidates.length, imported, shortlisted, review, rejected });
                 } else {
-                    summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, error: result.error });
+                    summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: result.error });
                 }
             } catch (err: any) {
-                summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, error: err.message });
+                summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err.message });
+            }
+        }
+
+        // ── Merge.dev ATS ─────────────────────────────────────────────────
+        if (mergeStatus.enabled) {
+            console.log('[Sourcer] Merge.dev: pulling candidates from connected ATS...');
+            try {
+                const mergeData = await getMergeCandidates(50);
+                const mergeCandidates: any[] = mergeData?.results ?? [];
+                let imported = 0, shortlisted = 0, review = 0, rejected = 0;
+                for (const c of mergeCandidates) {
+                    try {
+                        const r = await importMergeCandidate(db, c, openJobs);
+                        if (r.imported) { imported++; if (r.status === 'Shortlisted') shortlisted++; else if (r.status === 'Rejected') rejected++; else review++; }
+                    } catch { /* skip */ }
+                }
+                summary.push({ source: 'Merge.dev', role: 'All roles', found: mergeCandidates.length, imported, shortlisted, review, rejected });
+            } catch (err: any) {
+                summary.push({ source: 'Merge.dev', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err.message });
             }
         }
 
         const totalImported = summary.reduce((s, r) => s + r.imported, 0);
-        const totalFound = summary.reduce((s, r) => s + r.found, 0);
+        const totalFound    = summary.reduce((s, r) => s + r.found, 0);
+        const totalShortlisted = summary.reduce((s, r) => s + r.shortlisted, 0);
+        const totalReview   = summary.reduce((s, r) => s + r.review, 0);
+        const totalRejected = summary.reduce((s, r) => s + r.rejected, 0);
 
-        const parts: string[] = [];
-        if (sgStatus.configured) parts.push('ScrapeGraphAI');
-        if (liStatus.hasSession) parts.push('LinkedIn');
-        if (parts.length === 0) parts.push('pipeline gap analysis');
+        const activeSources = [
+            fcStatus.configured && 'Firecrawl',
+            sgStatus.configured && 'ScrapeGraph',
+            liStatus.hasSession && 'LinkedIn',
+            mergeStatus.enabled && 'Merge.dev',
+        ].filter(Boolean).join(' + ') || 'no sources configured';
 
         const message = totalImported > 0
-            ? `Sourcer found ${totalFound} candidates via ${parts.join(' + ')} and imported ${totalImported} new candidates across ${openJobs.length} open role${openJobs.length !== 1 ? 's' : ''}.`
-            : `Sourcer scanned ${openJobs.length} open role${openJobs.length !== 1 ? 's' : ''} via ${parts.join(' + ')}. ${totalFound > 0 ? `Found ${totalFound} candidates but none were new (all duplicates).` : 'No new candidates found at this time.'}`;
+            ? `Sourced ${totalImported} new candidate${totalImported !== 1 ? 's' : ''} via ${activeSources} — ${totalShortlisted} shortlisted, ${totalReview} for review, ${totalRejected} rejected.`
+            : `Sourcer scanned ${openJobs.length} role${openJobs.length !== 1 ? 's' : ''} via ${activeSources}. ${totalFound > 0 ? `Found ${totalFound} but all were duplicates.` : 'No new candidates found.'}`;
 
-        res.json({ success: true, imported: totalImported, found: totalFound, summary, message });
+        res.json({ success: true, imported: totalImported, found: totalFound, shortlisted: totalShortlisted, review: totalReview, rejected: totalRejected, summary, message });
     } catch (err: any) {
         console.error('[HR Agent] Sourcer trigger error:', err);
         res.status(500).json({ error: 'Sourcer trigger failed', detail: err.message });
     }
 });
 
-// Sourcer config — session status and API status
+// Sourcer config — session status and API status for all sourcing providers
 router.get('/sourcer/config', async (_req, res) => {
     try {
         const liStatus = getLinkedInSessionStatus();
         const sgStatus = getScrapeGraphStatus();
+        const mergeStatus = getMergeStatus();
 
         const db = await getDb();
         const sourcedCount = await db.get(`SELECT COUNT(*) as count FROM candidates WHERE is_sourced = 1`) as { count: number };
@@ -1483,6 +1596,7 @@ router.get('/sourcer/config', async (_req, res) => {
             LIMIT 5
         `) as { first_name: string; last_name: string; applied_role: string; source: string; created_at: string }[];
 
+        const fcStatus2 = getFirecrawlStatus();
         res.json({
             linkedin: {
                 sessionActive: liStatus.hasSession,
@@ -1494,6 +1608,16 @@ router.get('/sourcer/config', async (_req, res) => {
                 configured: sgStatus.configured,
                 enabled: sgStatus.enabled,
                 baseUrl: sgStatus.baseUrl,
+            },
+            firecrawl: {
+                configured: fcStatus2.configured,
+                enabled: fcStatus2.enabled,
+                baseUrl: fcStatus2.baseUrl,
+            },
+            merge: {
+                configured: mergeStatus.configured,
+                enabled: mergeStatus.enabled,
+                hasAccountToken: mergeStatus.hasAccountToken,
             },
             stats: {
                 totalSourced: sourcedCount.count,
@@ -1508,25 +1632,62 @@ router.get('/sourcer/config', async (_req, res) => {
 
 // ── Candidate import helpers ──────────────────────────────────────────────────
 
+type OpenJob = { id: number; title: string; location: string; description: string; requirements: string; status: string };
+type ImportResult = { imported: boolean; status?: string; score?: number };
+
 function splitName(fullName: string): { firstName: string; lastName: string } {
     const parts = fullName.trim().split(/\s+/);
     if (parts.length === 1) return { firstName: parts[0], lastName: '' };
     return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
 }
 
-async function importScrapeGraphCandidate(db: any, c: ScrapeGraphCandidate): Promise<boolean> {
-    const { firstName, lastName } = splitName(c.name);
+function runSourcerAssessment(
+    firstName: string, lastName: string, email: string, location: string,
+    skills: string[], headline: string, content: string, targetRole: string, openJobs: OpenJob[]
+) {
+    const synthetic = {
+        analysis_meta: { source: 'sourcer-import', confidence: 'low' as const },
+        candidate: { first_name: firstName, last_name: lastName, email, location },
+        summary: { years_experience: 0, current_role: headline, technical_skills: skills, key_achievements: [] as string[] },
+    };
+    return assessCandidateAgainstJobs(synthetic, openJobs, { applicationContent: content, subject: targetRole });
+}
 
-    // Generate placeholder email if none found (required field)
+async function applyAssessment(db: any, email: string, assessment: ReturnType<typeof assessCandidateAgainstJobs>) {
+    const workflowState = assessment.status === 'Shortlisted' ? 'Qualified'
+        : assessment.status === 'Rejected' ? 'Rejected' : 'Review Required';
+    const nextAction = assessment.status === 'Shortlisted' ? 'Contact candidate for initial conversation'
+        : assessment.status === 'Rejected' ? 'Archive — profile below threshold'
+        : 'Recruiter review required against matched job criteria';
+
+    await db.run(`
+        UPDATE candidates SET
+            job_id = ?, applied_role = ?, overall_score = ?, breakdown_score = ?,
+            decision_status = ?, ai_reasoning = ?, workflow_state = ?, next_action = ?
+        WHERE email = ?
+    `, [
+        assessment.matchedJobId ?? null,
+        assessment.matchedJobTitle ?? null,
+        assessment.overallScore,
+        JSON.stringify(assessment.breakdown),
+        assessment.status,
+        JSON.stringify({ matchedJobId: assessment.matchedJobId, matchedJobTitle: assessment.matchedJobTitle, matchedSkills: assessment.matchedSkills, reasons: assessment.reasons, analysisSource: 'sourcer-import' }),
+        workflowState,
+        nextAction,
+        email,
+    ]);
+}
+
+async function importScrapeGraphCandidate(db: any, c: ScrapeGraphCandidate, openJobs: OpenJob[]): Promise<ImportResult> {
+    const { firstName, lastName } = splitName(c.name);
     const email = c.email && c.email.includes('@')
         ? c.email
         : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.sg@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
 
     const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
-    if (existing) return false;
+    if (existing) return { imported: false };
 
     const skillsJson = JSON.stringify(c.skills.slice(0, 20));
-
     await db.run(`
         INSERT INTO candidates (
             first_name, last_name, email, current_role, location,
@@ -1535,32 +1696,22 @@ async function importScrapeGraphCandidate(db: any, c: ScrapeGraphCandidate): Pro
             decision_status, communication_status, reply_status, interview_status,
             workflow_state, next_action
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
-    `, [
-        firstName,
-        lastName,
-        email,
-        c.headline.slice(0, 200),
-        c.location.slice(0, 200),
-        skillsJson,
-        'ScrapeGraphAI',
-        c.jobRole,
-        c.profileUrl.slice(0, 500),
-        c.about.slice(0, 2000),
-        c.headline.slice(0, 300),
-    ]);
+    `, [firstName, lastName, email, c.headline.slice(0, 200), c.location.slice(0, 200), skillsJson,
+        'ScrapeGraphAI', c.jobRole, c.profileUrl.slice(0, 500), c.about.slice(0, 2000), c.headline.slice(0, 300)]);
 
-    return true;
+    const assessment = runSourcerAssessment(firstName, lastName, email, c.location, c.skills, c.headline, c.about, c.jobRole, openJobs);
+    await applyAssessment(db, email, assessment);
+    return { imported: true, status: assessment.status, score: assessment.overallScore };
 }
 
-async function importLinkedInCandidate(db: any, c: import('../services/sourcer/linkedin_sourcer').LinkedInCandidate): Promise<boolean> {
+async function importLinkedInCandidate(db: any, c: import('../services/sourcer/linkedin_sourcer').LinkedInCandidate, openJobs: OpenJob[]): Promise<ImportResult> {
     const { firstName, lastName } = splitName(c.name);
-
     const email = c.email && c.email.includes('@')
         ? c.email
         : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.li@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
 
     const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
-    if (existing) return false;
+    if (existing) return { imported: false };
 
     const skillsList = c.skills ? c.skills.split(',').map((s: string) => s.trim()).filter(Boolean).slice(0, 20) : [];
     const skillsJson = JSON.stringify(skillsList);
@@ -1575,23 +1726,77 @@ async function importLinkedInCandidate(db: any, c: import('../services/sourcer/l
             decision_status, communication_status, reply_status, interview_status,
             workflow_state, next_action
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
-    `, [
-        firstName,
-        lastName,
-        email,
-        c.headline.slice(0, 200),
-        c.location.slice(0, 200),
-        c.phone.slice(0, 50),
-        c.company.slice(0, 200),
-        skillsJson,
-        'LinkedIn Sourcer',
-        c.jobRole,
-        c.profileUrl.slice(0, 500),
-        content,
-        c.headline.slice(0, 300),
-    ]);
+    `, [firstName, lastName, email, c.headline.slice(0, 200), c.location.slice(0, 200),
+        c.phone.slice(0, 50), c.company.slice(0, 200), skillsJson, 'LinkedIn Sourcer', c.jobRole,
+        c.profileUrl.slice(0, 500), content, c.headline.slice(0, 300)]);
 
-    return true;
+    const assessment = runSourcerAssessment(firstName, lastName, email, c.location, skillsList, c.headline, content, c.jobRole, openJobs);
+    await applyAssessment(db, email, assessment);
+    return { imported: true, status: assessment.status, score: assessment.overallScore };
+}
+
+async function importFirecrawlCandidate(db: any, c: FirecrawlCandidate, openJobs: OpenJob[]): Promise<ImportResult> {
+    const { firstName, lastName } = splitName(c.name);
+    const email = c.email && c.email.includes('@')
+        ? c.email
+        : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.fc@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
+
+    const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
+    if (existing) return { imported: false };
+
+    const skillsJson = JSON.stringify(c.skills.slice(0, 20));
+    await db.run(`
+        INSERT INTO candidates (
+            first_name, last_name, email, current_role, location,
+            skills, source, applied_role, is_sourced, sourcing_stage,
+            profile_url, application_content, quick_summary,
+            decision_status, communication_status, reply_status, interview_status,
+            workflow_state, next_action
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
+    `, [firstName, lastName, email, c.headline.slice(0, 200), c.location.slice(0, 200), skillsJson,
+        'Firecrawl', c.jobRole, c.profileUrl.slice(0, 500), c.about.slice(0, 2000), c.headline.slice(0, 300)]);
+
+    const assessment = runSourcerAssessment(firstName, lastName, email, c.location, c.skills, c.headline, c.about, c.jobRole, openJobs);
+    await applyAssessment(db, email, assessment);
+    return { imported: true, status: assessment.status, score: assessment.overallScore };
+}
+
+async function importMergeCandidate(db: any, c: any, openJobs: OpenJob[]): Promise<ImportResult> {
+    const firstName = String(c.first_name || c.name?.split(' ')[0] || '').trim();
+    const lastName = String(c.last_name || c.name?.split(' ').slice(1).join(' ') || '').trim();
+    if (!firstName) return { imported: false };
+
+    const emailObj = Array.isArray(c.email_addresses) ? c.email_addresses[0] : null;
+    const email = emailObj?.value
+        ? String(emailObj.value).trim()
+        : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.merge@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
+
+    const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
+    if (existing) return { imported: false };
+
+    const headline = String(c.title || c.current_role || '').slice(0, 200);
+    const location = String(c.locations?.[0]?.name || c.location || '').slice(0, 200);
+    const skills: string[] = Array.isArray(c.tags) ? c.tags.map((t: any) => String(t)).slice(0, 20) : [];
+    const content = String(c.summary || c.description || '').slice(0, 2000);
+    const skillsJson = JSON.stringify(skills);
+
+    // Best-guess the target role from open jobs
+    const targetRole = openJobs[0]?.title ?? 'Unknown';
+
+    await db.run(`
+        INSERT INTO candidates (
+            first_name, last_name, email, current_role, location,
+            skills, source, applied_role, is_sourced, sourcing_stage,
+            application_content, quick_summary,
+            decision_status, communication_status, reply_status, interview_status,
+            workflow_state, next_action
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
+    `, [firstName, lastName, email, headline, location, skillsJson,
+        'Merge.dev', targetRole, content, headline.slice(0, 300)]);
+
+    const assessment = runSourcerAssessment(firstName, lastName, email, location, skills, headline, content, targetRole, openJobs);
+    await applyAssessment(db, email, assessment);
+    return { imported: true, status: assessment.status, score: assessment.overallScore };
 }
 
 // Outreach — send outreach emails to shortlisted candidates not yet contacted
@@ -1728,5 +1933,169 @@ router.post('/trigger/coordinator', async (_req, res) => {
         res.status(500).json({ error: 'Coordinator trigger failed' });
     }
 });
+
+// ---------------------------------------------------------------------------
+// Direct CV / PDF upload
+// ---------------------------------------------------------------------------
+
+router.post(
+    '/upload-cv',
+    express.raw({ type: 'application/pdf', limit: '10mb' }),
+    async (req, res) => {
+        try {
+            const buffer = req.body as Buffer;
+            if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+                return res.status(400).json({ error: 'Request body must be a PDF file (Content-Type: application/pdf)' });
+            }
+
+            const fileName = typeof req.query.fileName === 'string'
+                ? req.query.fileName.slice(0, 200)
+                : 'resume.pdf';
+            const subjectHint = typeof req.query.subject === 'string'
+                ? req.query.subject.slice(0, 300)
+                : '';
+
+            // 1. Extract text
+            let cvText: string;
+            try {
+                cvText = await extractTextFromPdf(buffer);
+            } catch (err: any) {
+                return res.status(422).json({ error: `PDF parsing failed: ${err.message}` });
+            }
+
+            // 2. AI analysis
+            let aiData: any;
+            try {
+                aiData = await analyzeCandidateCV(cvText);
+            } catch (err: any) {
+                return res.status(422).json({ error: `AI analysis failed: ${err.message}` });
+            }
+
+            const db = await getDb();
+            const openJobs = await db.all(
+                `SELECT id, title, location, description, requirements, status FROM jobs WHERE status = 'Open'`
+            );
+
+            // 3. Decision engine
+            const assessment = assessCandidateAgainstJobs(aiData, openJobs, {
+                subject: subjectHint || aiData.summary?.current_role || '',
+                applicationContent: cvText.substring(0, 2000),
+            });
+
+            const quickSummary = (() => {
+                const name = [aiData.candidate?.first_name, aiData.candidate?.last_name].filter(Boolean).join(' ') || 'Candidate';
+                const role = assessment.matchedJobTitle || assessment.inferredTargetRole || 'the role';
+                if (assessment.status === 'Shortlisted') return `${name} is a strong match for ${role}, with solid alignment on skills and experience.`;
+                if (assessment.status === 'Rejected') return `${name} is not a close fit for ${role}. ${assessment.reasons[assessment.reasons.length - 1] || ''}`.substring(0, 500);
+                return `${name} needs recruiter review for ${role}. ${assessment.reasons[assessment.reasons.length - 1] || ''}`.substring(0, 500);
+            })();
+
+            const workflowState = assessment.status === 'Shortlisted' ? 'Interview Ready'
+                : assessment.status === 'Rejected' ? 'Closed'
+                : 'Awaiting Review';
+            const nextAction = assessment.status === 'Shortlisted' ? 'Send shortlist outreach'
+                : assessment.status === 'Rejected' ? 'No action required'
+                : 'Recruiter review required against matched job criteria';
+
+            const reasoningPayload = JSON.stringify({
+                matchedJobId: assessment.matchedJobId,
+                matchedJobTitle: assessment.matchedJobTitle,
+                inferredTargetRole: assessment.inferredTargetRole,
+                analysisSource: assessment.analysisSource,
+                confidence: assessment.confidence,
+                requiredSkills: assessment.requiredSkills,
+                matchedSkills: assessment.matchedSkills,
+                hardFlags: assessment.hardFlags,
+                reasons: assessment.reasons,
+            });
+
+            // 4. Insert / update candidate
+            await db.run(`
+                INSERT INTO candidates (
+                    job_id, first_name, last_name, email, phone, location,
+                    years_experience, current_role, skills, achievements,
+                    overall_score, breakdown_score, decision_status,
+                    ai_reasoning, source, applied_role, expected_salary, notice_period,
+                    communication_status, reply_status, interview_status,
+                    workflow_state, next_action, application_content, quick_summary
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(email) DO UPDATE SET
+                    job_id              = excluded.job_id,
+                    first_name          = excluded.first_name,
+                    last_name           = excluded.last_name,
+                    phone               = excluded.phone,
+                    location            = excluded.location,
+                    years_experience    = excluded.years_experience,
+                    current_role        = excluded.current_role,
+                    skills              = excluded.skills,
+                    achievements        = excluded.achievements,
+                    overall_score       = excluded.overall_score,
+                    breakdown_score     = excluded.breakdown_score,
+                    decision_status     = excluded.decision_status,
+                    ai_reasoning        = excluded.ai_reasoning,
+                    source              = excluded.source,
+                    applied_role        = excluded.applied_role,
+                    communication_status = excluded.communication_status,
+                    reply_status        = excluded.reply_status,
+                    interview_status    = excluded.interview_status,
+                    workflow_state      = excluded.workflow_state,
+                    next_action         = excluded.next_action,
+                    application_content = excluded.application_content,
+                    quick_summary       = excluded.quick_summary
+            `, [
+                assessment.matchedJobId,
+                aiData.candidate.first_name, aiData.candidate.last_name,
+                aiData.candidate.email, aiData.candidate.phone,
+                aiData.candidate.location,
+                aiData.summary.years_experience,
+                aiData.summary.current_role,
+                JSON.stringify(aiData.summary.technical_skills),
+                JSON.stringify(aiData.summary.key_achievements),
+                assessment.overallScore,
+                JSON.stringify(assessment.breakdown),
+                assessment.status,
+                reasoningPayload,
+                'Direct Upload',
+                assessment.matchedJobTitle || assessment.inferredTargetRole,
+                '', '',
+                'Acknowledged', 'No Reply', 'Not Scheduled',
+                workflowState, nextAction,
+                cvText.substring(0, 5000),
+                quickSummary,
+            ]);
+
+            const saved = await db.get(
+                `SELECT * FROM candidates WHERE email = ?`,
+                [aiData.candidate.email]
+            );
+
+            if (saved) {
+                await logCandidateEvent(db, saved.id, 'cv_uploaded',
+                    `CV uploaded directly: ${fileName}`,
+                    { fileName, score: assessment.overallScore, status: assessment.status }
+                );
+            }
+
+            res.status(201).json({
+                success: true,
+                candidate: saved,
+                assessment: {
+                    status: assessment.status,
+                    overallScore: assessment.overallScore,
+                    matchedJobTitle: assessment.matchedJobTitle,
+                    inferredTargetRole: assessment.inferredTargetRole,
+                    confidence: assessment.confidence,
+                    matchedSkills: assessment.matchedSkills,
+                    hardFlags: assessment.hardFlags,
+                    reasons: assessment.reasons,
+                },
+                quickSummary,
+            });
+        } catch (err: any) {
+            console.error('[HR Agent] CV upload error:', err);
+            res.status(500).json({ error: err.message || 'CV upload failed' });
+        }
+    }
+);
 
 export default router;

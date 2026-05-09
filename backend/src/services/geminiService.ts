@@ -12,14 +12,13 @@ let genAI: GoogleGenerativeAI | null = null;
 if (API_KEY) {
   try {
     genAI = new GoogleGenerativeAI(API_KEY);
-    console.info('✅ Gemini AI initialized successfully');
+    console.info('[AI] Gemini initialized successfully');
   } catch (err) {
-    console.warn('⚠️ Failed to initialize Gemini AI, proceeding in mock mode.', err);
+    console.error('[AI] CRITICAL: Failed to initialize Gemini AI. Candidate analysis will throw — no silent mock fallback.', err);
     genAI = null;
   }
 } else {
-  console.info('ℹ️ No AI API key found; running geminiService in MOCK mode.');
-  console.info('💡 Add GEMINI_API_KEY to backend/.env to enable AI features');
+  console.error('[AI] CRITICAL: No Gemini API key found (GEMINI_API_KEY). Candidate analysis is disabled. Add GEMINI_API_KEY to backend/.env.');
 }
 
 const mockAnalyze = (candidate: Candidate, jobDescription: string) => {
@@ -42,9 +41,11 @@ export async function analyzeCandidate(
   CV: string;
   'Quick Read': string;
 }> {
-  if (!genAI && (!options || !options.mockMode)) return mockAnalyze(candidate, jobDescription);
+  if (!genAI) {
+    if (options?.mockMode) return mockAnalyze(candidate, jobDescription);
+    throw new Error('[AI] Gemini AI is not initialized. Set GEMINI_API_KEY in backend/.env. Refusing to produce mock hiring decisions.');
+  }
   try {
-    if (!genAI) throw new Error('Gemini AI not initialized');
     
     const model = genAI.getGenerativeModel({
       model: MODEL,
@@ -115,8 +116,10 @@ Return JSON:
       };
     }
   } catch (err) {
+    // Re-throw — callers must handle AI failures explicitly rather than
+    // silently receiving fabricated scores that flow into real hiring decisions.
     console.error('[AI] analyzeCandidate error:', err);
-    return mockAnalyze(candidate, jobDescription);
+    throw err;
   }
 }
 

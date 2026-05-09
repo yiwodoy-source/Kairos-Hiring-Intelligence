@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useCallback } from 'react';
 import { JobPosting, Candidate, JobStatus, CandidateStatus } from '../types.ts';
 import { RotateCcw, User, Globe } from 'lucide-react';
@@ -380,23 +380,23 @@ Senior Associate | Industry Corp | 2020 - Present
 
       {/* --- Header --- */}
       <div className="flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center flex-shrink-0">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Recruitment & Hiring</h1>
-        <div className="flex flex-wrap gap-2 bg-slate-900 border border-slate-700 p-1 rounded-xl shadow-sm">
+        <h1 className="text-2xl font-bold text-slate-800">Recruitment & Hiring</h1>
+        <div className="flex flex-wrap gap-2 bg-white border border-slate-200 p-1 rounded-xl shadow-sm">
           <button
             onClick={() => setActiveTab('jobs')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'jobs' ? 'bg-indigo-500/15 text-indigo-300 shadow-sm ring-1 ring-indigo-400/40' : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'}`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'jobs' ? 'bg-indigo-500/15 text-indigo-300 shadow-sm ring-1 ring-indigo-400/40' : 'text-slate-400 hover:text-slate-100 hover:bg-white'}`}
           >
             Job Postings
           </button>
           <button
             onClick={() => setActiveTab('screening')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'screening' ? 'bg-indigo-500/15 text-indigo-300 shadow-sm ring-1 ring-indigo-400/40' : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'}`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'screening' ? 'bg-indigo-500/15 text-indigo-300 shadow-sm ring-1 ring-indigo-400/40' : 'text-slate-400 hover:text-slate-100 hover:bg-white'}`}
           >
             Candidate Screening
           </button>
           <button
             onClick={() => setActiveTab('sourcing')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'sourcing' ? 'bg-indigo-500/15 text-indigo-300 shadow-sm ring-1 ring-indigo-400/40' : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'}`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'sourcing' ? 'bg-indigo-500/15 text-indigo-300 shadow-sm ring-1 ring-indigo-400/40' : 'text-slate-400 hover:text-slate-100 hover:bg-white'}`}
           >
             <Globe className="w-3.5 h-3.5" />
             AI Sourcing
@@ -452,7 +452,7 @@ Senior Associate | Industry Corp | 2020 - Present
               isUpdatingStatus={isUpdatingCandidateStatus}
             />
           ) : (
-            <div className="flex-1 h-full flex flex-col items-center justify-center text-slate-400 bg-slate-900 rounded-2xl border border-slate-700 shadow-sm">
+            <div className="flex-1 h-full flex flex-col items-center justify-center text-slate-400 bg-white rounded-2xl border border-slate-200 shadow-sm">
               <User className="w-16 h-16 mb-4 opacity-30" />
               <p className="text-base font-medium text-slate-200">Select a candidate to review screening details</p>
               <p className="mt-2 text-sm text-slate-500">Analysis, status updates, and export actions will appear here.</p>
@@ -471,7 +471,7 @@ Senior Associate | Industry Corp | 2020 - Present
 
       {/* --- Toast Notification System --- */}
       {notification && (
-        <div className="fixed bottom-6 right-6 max-w-md bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce-in z-50 border border-slate-700">
+        <div className="fixed bottom-6 right-6 max-w-md bg-white text-slate-800 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce-in z-50 border border-slate-200">
           <div className={`w-2 h-2 rounded-full ${notification.type === 'success' ? 'bg-green-400' : notification.type === 'info' ? 'bg-sky-400' : 'bg-red-400'}`} />
           <span className="text-sm font-medium">{notification.message}</span>
           {undoStack.length > 0 && (

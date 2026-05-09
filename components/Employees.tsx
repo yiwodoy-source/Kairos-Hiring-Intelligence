@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useMemo, useCallback } from 'react';
 import { Employee, EmployeeStatus } from '../types.ts';
 import { Star, Search, Sparkles, Users, BookUser } from 'lucide-react';
@@ -39,8 +39,8 @@ export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) =>
   return (
     <div className="space-y-6 h-full flex flex-col">
       <div className="flex justify-between items-center flex-shrink-0">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Employee Management</h1>
-        <button className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
+        <h1 className="text-2xl font-bold text-slate-800">Employee Management</h1>
+        <button className="bg-indigo-600 text-slate-800 px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
           Add Employee
         </button>
       </div>
@@ -138,7 +138,7 @@ export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) =>
                   <button
                     onClick={handleGenerateReview}
                     disabled={isGenerating || !reviewNotes}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="px-4 py-2 bg-indigo-600 text-slate-800 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     {isGenerating ? 'Generating...' : 'Draft Review with AI'}
                     {!isGenerating && <Sparkles className="w-4 h-4" />}

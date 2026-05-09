@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+﻿import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   User,
   ChevronRight,
@@ -21,9 +21,18 @@ import {
   CalendarCheck,
   History,
   GitCommitHorizontal,
+  Upload,
+  BrainCircuit,
+  ShieldAlert,
+  StickyNote,
+  ThumbsUp,
+  MessageSquare,
 } from 'lucide-react';
 import { apiFetch } from '../services/apiClient';
 import { Candidate, CandidateStatus, JobPosting } from '../types.ts';
+import { UploadCVModal } from './UploadCVModal';
+import { mapCandidate } from '../services/hrDataMappers';
+import type { CandidateRow } from '../services/hrDataMappers';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,6 +66,15 @@ interface CandidateEvent {
   actor: string;
   metadata: string | null;
   created_at: string;
+}
+
+interface OpenClawAdvice {
+  workflow_state?: string;
+  next_action?: string;
+  recommended_decision_status?: string;
+  recommended_sourcing_stage?: string;
+  screening_notes?: string[];
+  risk_flags?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -108,9 +126,9 @@ const PIPELINE_STAGES: {
   {
     id: CandidateStatus.OFFER,
     label: 'Offer',
-    color: '#8B5CF6',
-    bgClass: 'bg-violet-500/10',
-    textClass: 'text-violet-400',
+    color: '#E8962A',
+    bgClass: 'bg-amber-400/10',
+    textClass: 'text-amber-500',
   },
 ];
 
@@ -159,7 +177,7 @@ function getSourceLabel(candidate: Candidate): { label: string; cls: string } {
   if (candidate.emailContent || candidate.email) {
     return {
       label: 'Gmail Intake',
-      cls: 'bg-violet-500/10 text-violet-400',
+      cls: 'bg-amber-400/10 text-amber-500',
     };
   }
   return {
@@ -190,15 +208,15 @@ const CandidateCard: React.FC<CandidateCardProps> = ({ candidate, onClick }) => 
   return (
     <button
       onClick={() => onClick(candidate)}
-      className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700/60 bg-white dark:bg-slate-900 p-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:border-slate-300 dark:hover:border-slate-600 group"
+      className="w-full text-left rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:border-slate-300 group"
     >
       {/* Name + role */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-sm text-slate-900 dark:text-white truncate">
+          <p className="font-semibold text-sm text-slate-800 truncate">
             {candidate.name}
           </p>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">
+          <p className="mt-0.5 text-xs text-slate-500 truncate">
             {candidate.appliedRole || candidate.currentRole || 'Role pending'}
           </p>
         </div>
@@ -218,15 +236,15 @@ const CandidateCard: React.FC<CandidateCardProps> = ({ candidate, onClick }) => 
       {score > 0 && (
         <div className="mt-3">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
+            <span className="text-[11px] text-slate-500 flex items-center gap-1">
               <Zap className="w-3 h-3" />
               AI Fit
             </span>
-            <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+            <span className="text-[11px] font-semibold text-slate-700">
               {score}%
             </span>
           </div>
-          <div className="h-1 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+          <div className="h-1 w-full rounded-full bg-slate-100 overflow-hidden">
             <div
               className={`h-full rounded-full ${getScoreColor(score)} transition-all`}
               style={{ width: `${score}%` }}
@@ -271,6 +289,10 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
   const [outreachSending, setOutreachSending] = useState(false);
   const [outreachMessage, setOutreachMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  // WhatsApp state
+  const [whatsappSending, setWhatsappSending] = useState(false);
+  const [whatsappMessage, setWhatsappMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
   // Interview scheduling state
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
@@ -282,6 +304,13 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
   // Activity timeline state
   const [events, setEvents] = useState<CandidateEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
+
+  // OpenClaw AI Advisor state
+  const [ocRunning, setOcRunning] = useState(false);
+  const [ocResult, setOcResult] = useState<OpenClawAdvice | null>(null);
+  const [ocError, setOcError] = useState<string | null>(null);
+  const [ocApplying, setOcApplying] = useState(false);
+  const [ocApplied, setOcApplied] = useState(false);
 
   const matchedJob = useMemo(
     () => jobs.find((j) => j.id === candidate.jobId) || null,
@@ -324,6 +353,24 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
     const next = e.target.value as CandidateStatus;
     setLocalStatus(next);
     await onStatusChange(candidate.id, next);
+  };
+
+  // Send WhatsApp message
+  const handleSendWhatsApp = async () => {
+    setWhatsappSending(true);
+    setWhatsappMessage(null);
+    try {
+      await apiFetch(`/api/integrations/whatsapp/send-candidate`, {
+        method: 'POST',
+        body: JSON.stringify({ candidateId: candidate.id }),
+      });
+      setWhatsappMessage({ text: 'WhatsApp sent ✓', type: 'success' });
+    } catch (err: any) {
+      const detail = err?.message || 'Failed to send WhatsApp';
+      setWhatsappMessage({ text: detail.includes('not configured') ? 'WhatsApp not configured' : detail, type: 'error' });
+    } finally {
+      setWhatsappSending(false);
+    }
   };
 
   // Send outreach email
@@ -384,26 +431,72 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
     }
   };
 
+  // OpenClaw AI Advisor
+  const handleRunOpenClaw = async () => {
+    setOcRunning(true);
+    setOcError(null);
+    setOcResult(null);
+    setOcApplied(false);
+    try {
+      const res = await apiFetch<{ success: boolean; text: string }>(
+        `/api/openclaw/candidate/${candidate.id}/run`,
+        { method: 'POST' }
+      );
+      const parsed: OpenClawAdvice = JSON.parse(res.text);
+      setOcResult(parsed);
+    } catch (err: unknown) {
+      setOcError(err instanceof Error ? err.message : 'AI Advisor failed');
+    } finally {
+      setOcRunning(false);
+    }
+  };
+
+  const handleApplyOpenClaw = async () => {
+    if (!ocResult) return;
+    setOcApplying(true);
+    try {
+      const body: Record<string, string> = {};
+      if (ocResult.workflow_state) body.workflow_state = ocResult.workflow_state;
+      if (ocResult.next_action) body.next_action = ocResult.next_action;
+      if (ocResult.recommended_decision_status) body.recommended_decision_status = ocResult.recommended_decision_status;
+      if (ocResult.recommended_sourcing_stage) body.recommended_sourcing_stage = ocResult.recommended_sourcing_stage;
+      await apiFetch(`/api/openclaw/candidate/${candidate.id}/apply-recommendations`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      setOcApplied(true);
+      onCandidateUpdate(candidate.id, {
+        workflowState: ocResult.workflow_state,
+        nextAction: ocResult.next_action,
+        ...(ocResult.recommended_decision_status ? { status: ocResult.recommended_decision_status as CandidateStatus } : {}),
+      });
+    } catch (err: unknown) {
+      setOcError(err instanceof Error ? err.message : 'Failed to apply recommendations');
+    } finally {
+      setOcApplying(false);
+    }
+  };
+
   const isShortlisted = localStatus === CandidateStatus.SHORTLISTED;
 
   return (
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-30 bg-slate-950/50 backdrop-blur-sm"
+        className="fixed inset-0 z-30 bg-white/50 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden="true"
       />
 
       {/* Panel */}
-      <aside className="fixed right-0 top-0 z-40 flex h-full w-full max-w-lg flex-col border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl overflow-hidden">
+      <aside className="fixed right-0 top-0 z-40 flex h-full w-full max-w-lg flex-col border-l border-slate-200 bg-white shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-5 shrink-0">
+        <div className="flex items-start justify-between border-b border-slate-200 px-6 py-5 shrink-0">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Candidate Detail
             </p>
-            <h3 className="mt-1.5 text-xl font-semibold text-slate-900 dark:text-white truncate">
+            <h3 className="mt-1.5 text-xl font-semibold text-slate-800 truncate">
               {candidate.name}
             </h3>
             <div className="mt-1 flex items-center gap-2 flex-wrap">
@@ -416,7 +509,7 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="ml-4 rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors shrink-0"
+            className="ml-4 rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors shrink-0"
             aria-label="Close detail panel"
           >
             <X className="w-5 h-5" />
@@ -426,18 +519,18 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           {/* Contact info */}
-          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-4 space-y-2.5">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2.5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Contact
             </p>
             {candidate.email && (
-              <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <div className="flex items-center gap-2 text-sm text-slate-700">
                 <Mail className="w-4 h-4 text-slate-400 shrink-0" />
                 <span className="truncate">{candidate.email}</span>
               </div>
             )}
             {candidate.phone && (
-              <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <div className="flex items-center gap-2 text-sm text-slate-700">
                 <Phone className="w-4 h-4 text-slateink-400 shrink-0" />
                 <span>{candidate.phone}</span>
               </div>
@@ -445,16 +538,16 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
           </div>
 
           {/* Role info */}
-          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-4 space-y-2.5">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2.5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Role
             </p>
             {candidate.appliedRole && (
               <div className="flex items-start gap-2 text-sm">
                 <Briefcase className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
                 <div>
-                  <span className="text-slate-500 dark:text-slate-400 mr-1">Applied for:</span>
-                  <span className="font-medium text-slate-900 dark:text-white">
+                  <span className="text-slate-500 mr-1">Applied for:</span>
+                  <span className="font-medium text-slate-800">
                     {candidate.appliedRole}
                   </span>
                 </div>
@@ -464,8 +557,8 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
               <div className="flex items-start gap-2 text-sm">
                 <User className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
                 <div>
-                  <span className="text-slate-500 dark:text-slate-400 mr-1">Current role:</span>
-                  <span className="font-medium text-slate-900 dark:text-white">
+                  <span className="text-slate-500 mr-1">Current role:</span>
+                  <span className="font-medium text-slate-800">
                     {candidate.currentRole}
                   </span>
                 </div>
@@ -475,8 +568,8 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
               <div className="flex items-start gap-2 text-sm">
                 <Calendar className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
                 <div>
-                  <span className="text-slate-500 dark:text-slate-400 mr-1">Matched job:</span>
-                  <span className="font-medium text-slate-900 dark:text-white">
+                  <span className="text-slate-500 mr-1">Matched job:</span>
+                  <span className="font-medium text-slate-800">
                     {matchedJob.title}
                   </span>
                 </div>
@@ -485,8 +578,8 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
           </div>
 
           {/* Status dropdown */}
-          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
               Pipeline Status
             </p>
             <div className="flex items-center gap-3">
@@ -494,7 +587,7 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
                 value={localStatus}
                 onChange={handleStatusSelect}
                 disabled={saving}
-                className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white outline-none focus:border-violet-500 transition-colors disabled:opacity-60"
+                className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-500 transition-colors disabled:opacity-60"
               >
                 {ALL_STATUSES.map((s) => (
                   <option key={s} value={s}>
@@ -503,25 +596,25 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
                 ))}
               </select>
               {saving && (
-                <div className="w-4 h-4 rounded-full border-2 border-violet-600 border-t-transparent animate-spin shrink-0" />
+                <div className="w-4 h-4 rounded-full border-2 border-amber-500 border-t-transparent animate-spin shrink-0" />
               )}
             </div>
           </div>
 
           {/* Interview scheduling — only for shortlisted candidates */}
           {isShortlisted && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
                 Schedule Interview
               </p>
 
               <button
                 onClick={handleGetSlots}
                 disabled={loadingSlots}
-                className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-60"
+                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
               >
                 {loadingSlots ? (
-                  <div className="w-3.5 h-3.5 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+                  <div className="w-3.5 h-3.5 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
                 ) : (
                   <CalendarCheck className="w-3.5 h-3.5" />
                 )}
@@ -529,7 +622,7 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
               </button>
 
               {slotsError && (
-                <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{slotsError}</p>
+                <p className="mt-2 text-xs text-rose-600">{slotsError}</p>
               )}
 
               {slots.length > 0 && (
@@ -539,8 +632,8 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
                       key={idx}
                       className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
                         selectedSlot?.start === slot.start
-                          ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
-                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
+                          ? 'border-amber-500 bg-amber-50'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
                       }`}
                     >
                       <input
@@ -549,16 +642,16 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
                         value={slot.start}
                         checked={selectedSlot?.start === slot.start}
                         onChange={() => setSelectedSlot(slot)}
-                        className="accent-violet-600 shrink-0"
+                        className="accent-amber-500 shrink-0"
                       />
-                      <span className="text-sm text-slate-700 dark:text-slate-200">{slot.label}</span>
+                      <span className="text-sm text-slate-700">{slot.label}</span>
                     </label>
                   ))}
 
                   <button
                     onClick={handleBookInterview}
                     disabled={!selectedSlot || bookingInterview}
-                    className="mt-1 flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:opacity-50"
+                    className="mt-1 flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-800 transition hover:bg-amber-600 disabled:opacity-50"
                   >
                     {bookingInterview ? (
                       <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
@@ -574,8 +667,8 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
                 <p
                   className={`mt-2 text-xs font-medium ${
                     interviewMessage.type === 'success'
-                      ? 'text-emerald-600 dark:text-emerald-400'
-                      : 'text-rose-600 dark:text-rose-400'
+                      ? 'text-emerald-600'
+                      : 'text-rose-600'
                   }`}
                 >
                   {interviewMessage.text}
@@ -586,14 +679,14 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
 
           {/* AI score */}
           {score > 0 && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                   AI Fit Score
                 </p>
-                <span className="text-lg font-bold text-slate-900 dark:text-white">{score}%</span>
+                <span className="text-lg font-bold text-slate-800">{score}%</span>
               </div>
-              <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+              <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden">
                 <div
                   className={`h-full rounded-full ${getScoreColor(score)} transition-all`}
                   style={{ width: `${score}%` }}
@@ -604,35 +697,35 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
 
           {/* AI Reasoning Breakdown */}
           {hasReasoning && reasoning && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                   AI Analysis
                 </p>
                 {reasoning.confidence !== undefined && (
-                  <span className="rounded-full bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 text-[11px] font-semibold px-2.5 py-0.5">
+                  <span className="rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold px-2.5 py-0.5">
                     {Math.round(reasoning.confidence * 100)}% confidence
                   </span>
                 )}
               </div>
 
               {reasoning.matchedJobTitle && (
-                <p className="mb-2 text-sm text-slate-700 dark:text-slate-300">
-                  <span className="text-slate-500 dark:text-slate-400">Matched role: </span>
+                <p className="mb-2 text-sm text-slate-700">
+                  <span className="text-slate-500">Matched role: </span>
                   <span className="font-medium">{reasoning.matchedJobTitle}</span>
                 </p>
               )}
 
               {reasoning.matchedSkills && reasoning.matchedSkills.length > 0 && (
                 <div className="mb-2">
-                  <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+                  <p className="text-[11px] font-medium text-slate-500 mb-1.5">
                     Matched Skills
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {reasoning.matchedSkills.map((skill) => (
                       <span
                         key={skill}
-                        className="rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[11px] px-2 py-0.5"
+                        className="rounded-full bg-emerald-50 text-emerald-700 text-[11px] px-2 py-0.5"
                       >
                         {skill}
                       </span>
@@ -643,14 +736,14 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
 
               {reasoning.hardFlags && reasoning.hardFlags.length > 0 && (
                 <div className="mb-2">
-                  <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+                  <p className="text-[11px] font-medium text-slate-500 mb-1.5">
                     Flags
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {reasoning.hardFlags.map((flag) => (
                       <span
                         key={flag}
-                        className="rounded-full bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 text-[11px] px-2 py-0.5"
+                        className="rounded-full bg-rose-50 text-rose-700 text-[11px] px-2 py-0.5"
                       >
                         {flag}
                       </span>
@@ -661,16 +754,16 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
 
               {reasoning.reasons && reasoning.reasons.length > 0 && (
                 <div>
-                  <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+                  <p className="text-[11px] font-medium text-slate-500 mb-1.5">
                     Reasons
                   </p>
                   <ul className="space-y-1">
                     {reasoning.reasons.slice(0, 4).map((reason, idx) => (
                       <li
                         key={idx}
-                        className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300"
+                        className="flex items-start gap-2 text-sm text-slate-700"
                       >
-                        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                         <span>{reason}</span>
                       </li>
                     ))}
@@ -682,27 +775,170 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
 
           {/* Quick summary */}
           {candidate.quickSummary && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+            <div className="rounded-xl border border-slate-200 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
                 AI Summary
               </p>
-              <p className="text-sm text-slate-700 dark:text-slate-300 leading-6">
+              <p className="text-sm text-slate-700 leading-6">
                 {candidate.quickSummary}
               </p>
             </div>
           )}
 
+          {/* OpenClaw AI Advisor */}
+          <div className="rounded-xl border border-violet-200 bg-amber-50/50 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <BrainCircuit className="w-4 h-4 text-amber-500" />
+                <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">
+                  AI Advisor
+                </p>
+              </div>
+              {!ocResult && (
+                <button
+                  onClick={handleRunOpenClaw}
+                  disabled={ocRunning}
+                  className="flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-800 px-3 py-1.5 text-xs font-semibold transition-colors"
+                >
+                  {ocRunning ? (
+                    <div className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                  ) : (
+                    <BrainCircuit className="w-3 h-3" />
+                  )}
+                  {ocRunning ? 'Thinking…' : 'Run Analysis'}
+                </button>
+              )}
+              {ocResult && !ocApplied && (
+                <button
+                  onClick={handleRunOpenClaw}
+                  disabled={ocRunning}
+                  className="text-[11px] text-amber-500 hover:text-amber-700 disabled:opacity-40 transition-colors"
+                >
+                  Re-run
+                </button>
+              )}
+            </div>
+
+            {!ocResult && !ocRunning && !ocError && (
+              <p className="text-xs text-slate-500">
+                Ask the AI Advisor to reason over this candidate's full profile and recommend the next recruiting step.
+              </p>
+            )}
+
+            {ocRunning && (
+              <div className="flex items-center gap-2 py-2 text-xs text-amber-500">
+                <div className="w-3 h-3 rounded-full border-2 border-violet-400 border-t-transparent animate-spin" />
+                Analyzing profile against open roles…
+              </div>
+            )}
+
+            {ocError && (
+              <div className="flex items-start gap-2 rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-600">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                {ocError}
+              </div>
+            )}
+
+            {ocResult && (
+              <div className="space-y-3">
+                {/* Recommended status + workflow */}
+                <div className="grid grid-cols-2 gap-2">
+                  {ocResult.recommended_decision_status && (
+                    <div className="rounded-lg bg-white border border-slate-200 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">Decision</p>
+                      <p className="text-xs font-semibold text-slate-800">{ocResult.recommended_decision_status}</p>
+                    </div>
+                  )}
+                  {ocResult.workflow_state && (
+                    <div className="rounded-lg bg-white border border-slate-200 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">Workflow</p>
+                      <p className="text-xs font-semibold text-slate-800">{ocResult.workflow_state}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Next action */}
+                {ocResult.next_action && (
+                  <div className="flex items-start gap-2 rounded-lg bg-white border border-slate-200 px-3 py-2">
+                    <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">Next Action</p>
+                      <p className="text-xs text-slate-700">{ocResult.next_action}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Screening notes */}
+                {ocResult.screening_notes && ocResult.screening_notes.length > 0 && (
+                  <div className="rounded-lg bg-white border border-slate-200 px-3 py-2">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <StickyNote className="w-3 h-3 text-cyan-500" />
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400">Notes</p>
+                    </div>
+                    <ul className="space-y-1">
+                      {ocResult.screening_notes.map((note, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-xs text-slate-600">
+                          <span className="mt-1.5 w-1 h-1 rounded-full bg-cyan-400 shrink-0" />
+                          {note}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Risk flags */}
+                {ocResult.risk_flags && ocResult.risk_flags.length > 0 && (
+                  <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <ShieldAlert className="w-3 h-3 text-rose-500" />
+                      <p className="text-[10px] uppercase tracking-wider text-rose-500">Risk Flags</p>
+                    </div>
+                    <ul className="space-y-1">
+                      {ocResult.risk_flags.map((flag, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-xs text-rose-600">
+                          <span className="mt-1.5 w-1 h-1 rounded-full bg-rose-400 shrink-0" />
+                          {flag}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Apply / Applied */}
+                {ocApplied ? (
+                  <div className="flex items-center gap-1.5 text-xs text-emerald-600">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Recommendations applied to candidate record
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleApplyOpenClaw}
+                    disabled={ocApplying}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-800 py-2 text-xs font-semibold transition-colors"
+                  >
+                    {ocApplying ? (
+                      <div className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                    ) : (
+                      <ThumbsUp className="w-3 h-3" />
+                    )}
+                    {ocApplying ? 'Applying…' : 'Apply Recommendations'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Skills */}
           {candidate.skills && candidate.skills.length > 0 && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+            <div className="rounded-xl border border-slate-200 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
                 Skills
               </p>
               <div className="flex flex-wrap gap-2">
                 {candidate.skills.map((skill) => (
                   <span
                     key={skill}
-                    className="rounded-full bg-slate-100 dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-700 dark:text-slate-200"
+                    className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700"
                   >
                     {skill}
                   </span>
@@ -712,32 +948,34 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
           )}
 
           {/* Activity timeline */}
-          <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+          <div className="rounded-xl border border-slate-200 p-4">
             <div className="flex items-center gap-2 mb-3">
               <History className="w-3.5 h-3.5 text-slate-400" />
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Activity
               </p>
             </div>
             {eventsLoading ? (
               <div className="flex items-center gap-2 py-4 text-xs text-slate-400">
-                <div className="w-3 h-3 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
+                <div className="w-3 h-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
                 Loading activity…
               </div>
             ) : events.length === 0 ? (
               <p className="py-3 text-xs text-slate-400 italic">No recorded activity yet.</p>
             ) : (
               <div className="relative">
-                <div className="absolute left-2.5 top-2 bottom-2 w-px bg-slate-100 dark:bg-slate-800" />
+                <div className="absolute left-2.5 top-2 bottom-2 w-px bg-slate-100" />
                 <div className="space-y-3">
                   {events.map((ev) => {
                     const iconMap: Record<string, { Icon: React.ComponentType<{ className?: string }>; cls: string }> = {
-                      status_change:       { Icon: GitCommitHorizontal, cls: 'text-violet-400 bg-violet-500/10' },
+                      status_change:       { Icon: GitCommitHorizontal, cls: 'text-amber-500 bg-amber-400/10' },
                       outreach_sent:       { Icon: Mail,                cls: 'text-cyan-400 bg-cyan-500/10' },
                       interview_scheduled: { Icon: CalendarCheck,       cls: 'text-emerald-400 bg-emerald-500/10' },
                       rescreened:          { Icon: Zap,                 cls: 'text-amber-400 bg-amber-500/10' },
+                      cv_uploaded:         { Icon: Upload,              cls: 'text-amber-500 bg-amber-400/10' },
+                      openclaw_advice:     { Icon: BrainCircuit,        cls: 'text-amber-500 bg-amber-400/10' },
                     };
-                    const { Icon: EvIcon, cls } = iconMap[ev.event_type] ?? { Icon: Clock, cls: 'text-slate-400 bg-slate-100 dark:bg-slate-800' };
+                    const { Icon: EvIcon, cls } = iconMap[ev.event_type] ?? { Icon: Clock, cls: 'text-slate-400 bg-slate-100' };
                     const dt = new Date(ev.created_at);
                     const label = isNaN(dt.getTime()) ? ev.created_at
                       : dt.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -747,7 +985,7 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
                           <EvIcon className="w-2.5 h-2.5" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs text-slate-700 dark:text-slate-300 leading-4">{ev.description}</p>
+                          <p className="text-xs text-slate-700 leading-4">{ev.description}</p>
                           <p className="text-[11px] text-slate-400 mt-0.5">{label}</p>
                         </div>
                       </div>
@@ -760,12 +998,12 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
         </div>
 
         {/* Quick action footer */}
-        <div className="shrink-0 border-t border-slate-200 dark:border-slate-800 px-6 py-4">
+        <div className="shrink-0 border-t border-slate-200 px-6 py-4">
           <div className="flex items-center gap-3 flex-wrap">
             <button
               onClick={() => onStatusChange(candidate.id, CandidateStatus.SHORTLISTED)}
               disabled={saving || localStatus === CandidateStatus.SHORTLISTED}
-              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-slate-800 transition hover:bg-emerald-700 disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />
               Shortlist
@@ -773,7 +1011,7 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
             <button
               onClick={() => onStatusChange(candidate.id, CandidateStatus.REJECTED)}
               disabled={saving || localStatus === CandidateStatus.REJECTED}
-              className="flex items-center gap-2 rounded-xl border border-rose-300 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 px-4 py-2.5 text-sm font-semibold text-rose-700 dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-rose-950/60 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
             >
               <XCircle className="w-4 h-4" />
               Reject
@@ -781,7 +1019,7 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
             <button
               onClick={handleSendOutreach}
               disabled={outreachSending}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-200 transition hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60"
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
             >
               {outreachSending ? (
                 <div className="w-4 h-4 rounded-full border-2 border-slate-500 border-t-transparent animate-spin" />
@@ -790,16 +1028,27 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
               )}
               {outreachSending ? 'Sending…' : 'Send Outreach ▸'}
             </button>
+            <button
+              onClick={handleSendWhatsApp}
+              disabled={whatsappSending}
+              className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+            >
+              {whatsappSending ? (
+                <div className="w-4 h-4 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+              ) : (
+                <MessageSquare className="w-4 h-4" />
+              )}
+              {whatsappSending ? 'Sending…' : 'WhatsApp ▸'}
+            </button>
           </div>
           {outreachMessage && (
-            <p
-              className={`mt-2 text-xs font-medium ${
-                outreachMessage.type === 'success'
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : 'text-rose-600 dark:text-rose-400'
-              }`}
-            >
+            <p className={`mt-2 text-xs font-medium ${outreachMessage.type === 'success' ? 'text-emerald-600' : 'text-rose-600'}`}>
               {outreachMessage.text}
+            </p>
+          )}
+          {whatsappMessage && (
+            <p className={`mt-1 text-xs font-medium ${whatsappMessage.type === 'success' ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {whatsappMessage.text}
             </p>
           )}
         </div>
@@ -823,7 +1072,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({ stage, candidates, onCardCl
 
   return (
     <div
-      className="w-72 flex-shrink-0 flex flex-col rounded-xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/50 overflow-hidden"
+      className="w-72 flex-shrink-0 flex flex-col rounded-xl border border-slate-200 bg-white/60 overflow-hidden"
       style={{ borderTop: `3px solid ${stage.color}` }}
     >
       {/* Column header */}
@@ -847,9 +1096,9 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({ stage, candidates, onCardCl
       {/* Cards area */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-[100px]">
         {isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-28 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-700">
-            <MoreHorizontal className="w-5 h-5 text-slate-300 dark:text-slate-600 mb-1" />
-            <p className="text-xs text-slate-400 dark:text-slate-500">No candidates</p>
+          <div className="flex flex-col items-center justify-center h-28 rounded-xl border-2 border-dashed border-slate-200">
+            <MoreHorizontal className="w-5 h-5 text-slate-300 mb-1" />
+            <p className="text-xs text-slate-400">No candidates</p>
           </div>
         ) : (
           candidates.map((c) => (
@@ -876,14 +1125,14 @@ const RejectedPanel: React.FC<RejectedPanelProps> = ({ candidates, onCardClick }
   if (candidates.length === 0) return null;
 
   return (
-    <div className="mt-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+    <div className="mt-6 rounded-2xl border border-slate-200 bg-white overflow-hidden">
       <button
         onClick={() => setExpanded((p) => !p)}
-        className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors"
       >
         <div className="flex items-center gap-3">
           <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
             Rejected Candidates
           </span>
           <span className="rounded-full bg-rose-500/10 text-rose-400 px-2 py-0.5 text-[11px] font-bold">
@@ -898,24 +1147,24 @@ const RejectedPanel: React.FC<RejectedPanelProps> = ({ candidates, onCardClick }
       </button>
 
       {expanded && (
-        <div className="border-t border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+        <div className="border-t border-slate-200 divide-y divide-slate-100">
           {candidates.map((c) => {
             const score = c.aiMatchScore ?? 0;
             return (
               <button
                 key={c.id}
                 onClick={() => onCardClick(c)}
-                className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group"
+                className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-slate-50 transition-colors group"
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-7 h-7 rounded-full bg-rose-500/10 flex items-center justify-center shrink-0">
                     <XCircle className="w-4 h-4 text-rose-400" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                    <p className="text-sm font-medium text-slate-800 truncate">
                       {c.name}
                     </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    <p className="text-xs text-slate-500 truncate">
                       {c.appliedRole || c.currentRole || 'Role pending'}
                     </p>
                   </div>
@@ -951,6 +1200,16 @@ export const PipelinePage: React.FC<PipelinePageProps> = ({
   const [selectedJobId, setSelectedJobId] = useState<string>('all');
   const [drawerCandidate, setDrawerCandidate] = useState<Candidate | null>(null);
   const [savingStatus, setSavingStatus] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+
+  const refreshCandidates = useCallback(async () => {
+    try {
+      const rows = await apiFetch<CandidateRow[]>('/api/hr-agent/candidates');
+      setCandidates(rows.map(mapCandidate));
+    } catch {
+      // non-critical — pipeline will update on next full page reload
+    }
+  }, [setCandidates]);
 
   // ── Filtering ──────────────────────────────────────────────────────────────
   const filteredCandidates = useMemo(() => {
@@ -1039,12 +1298,12 @@ export const PipelinePage: React.FC<PipelinePageProps> = ({
       {/* Top bar */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-semibold text-slate-900 dark:text-white">
+          <h2 className="text-2xl font-semibold text-slate-800">
             Hiring Pipeline
           </h2>
-          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+          <p className="mt-0.5 text-sm text-slate-500">
             Tracking{' '}
-            <span className="font-medium text-slate-700 dark:text-slate-300">
+            <span className="font-medium text-slate-700">
               {totalActive}
             </span>{' '}
             active candidate{totalActive !== 1 ? 's' : ''} across{' '}
@@ -1061,17 +1320,17 @@ export const PipelinePage: React.FC<PipelinePageProps> = ({
               placeholder="Search candidates…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full sm:w-56 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-4 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 outline-none focus:border-violet-500 transition-colors"
+              className="w-full sm:w-56 rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-amber-500 transition-colors"
             />
           </div>
 
           {/* Job filter */}
-          <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
             <Filter className="w-4 h-4 text-slate-400 shrink-0" />
             <select
               value={selectedJobId}
               onChange={(e) => setSelectedJobId(e.target.value)}
-              className="bg-transparent text-sm text-slate-700 dark:text-slate-200 outline-none"
+              className="bg-transparent text-sm text-slate-700 outline-none"
             >
               <option value="all">All Jobs</option>
               {jobs.map((j) => (
@@ -1081,6 +1340,15 @@ export const PipelinePage: React.FC<PipelinePageProps> = ({
               ))}
             </select>
           </div>
+
+          {/* Upload CV */}
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-800 px-4 py-2 text-sm font-semibold transition-colors shrink-0"
+          >
+            <Upload className="w-4 h-4" />
+            Upload CV
+          </button>
         </div>
       </div>
 
@@ -1113,6 +1381,14 @@ export const PipelinePage: React.FC<PipelinePageProps> = ({
           onStatusChange={handleStatusChange}
           saving={savingStatus}
           onCandidateUpdate={handleCandidateUpdate}
+        />
+      )}
+
+      {/* Upload CV modal */}
+      {showUploadModal && (
+        <UploadCVModal
+          onClose={() => setShowUploadModal(false)}
+          onCandidateAdded={refreshCandidates}
         />
       )}
     </div>

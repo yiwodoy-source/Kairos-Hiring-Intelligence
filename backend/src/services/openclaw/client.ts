@@ -361,13 +361,13 @@ async function runDirectOllama(messages: Array<{ role: 'system' | 'user'; conten
                 stream: false,
                 format: 'json',
                 options: {
-                    num_predict: 96,
+                    num_predict: 512,
                     temperature: 0.1
                 }
             },
             {
                 headers: { 'Content-Type': 'application/json' },
-                timeout: 420000
+                timeout: 60000
             }
         );
 

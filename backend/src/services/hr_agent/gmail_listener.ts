@@ -112,6 +112,13 @@ async function hasMessageBeenProcessed(messageId: string): Promise<boolean> {
     return Boolean(existing);
 }
 
+// Cap how many messages we pull from Gmail per cycle to avoid quota bursts.
+// Each message costs 2 Gmail API calls (get + attachment), so keep this low.
+const GMAIL_FETCH_LIMIT = Math.min(
+    parseInt(process.env.GMAIL_FETCH_LIMIT || '15', 10),
+    50
+);
+
 async function listCandidateMessages(applicationLabelId: string) {
     const gmail = getGmailClient();
     const messagesById = new Map<string, 'application-label' | 'unread-fallback'>();
@@ -119,21 +126,27 @@ async function listCandidateMessages(applicationLabelId: string) {
     const labeled = await gmail.users.messages.list({
         userId: 'me',
         labelIds: [applicationLabelId],
-        q: 'has:attachment filename:pdf'
+        q: 'has:attachment filename:pdf',
+        maxResults: GMAIL_FETCH_LIMIT,
     });
 
     for (const message of labeled.data.messages || []) {
         if (message.id) messagesById.set(message.id, 'application-label');
     }
 
-    const unreadFallback = await gmail.users.messages.list({
-        userId: 'me',
-        q: 'has:attachment filename:pdf is:unread'
-    });
+    // Only fill remaining slots from unread fallback
+    const remaining = GMAIL_FETCH_LIMIT - messagesById.size;
+    if (remaining > 0) {
+        const unreadFallback = await gmail.users.messages.list({
+            userId: 'me',
+            q: 'has:attachment filename:pdf is:unread',
+            maxResults: remaining,
+        });
 
-    for (const message of unreadFallback.data.messages || []) {
-        if (message.id && !messagesById.has(message.id)) {
-            messagesById.set(message.id, 'unread-fallback');
+        for (const message of unreadFallback.data.messages || []) {
+            if (message.id && !messagesById.has(message.id)) {
+                messagesById.set(message.id, 'unread-fallback');
+            }
         }
     }
 

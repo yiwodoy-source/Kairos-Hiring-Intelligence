@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { log as structuredLog } from '../../lib/logger';
 
 const LOG_DIR = path.resolve(process.cwd(), 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'hr_agent.log');
@@ -38,14 +39,18 @@ export function logAgentActivity(message: string, level: 'INFO' | 'ERROR' | 'WAR
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] [${level}] ${message}\n`;
 
-    console.log(logEntry.trim());
-    
-    // Write log asynchronously to avoid blocking
+    // Emit structured JSON to stdout/stderr
+    const ctx = { component: 'hr-agent' };
+    if (level === 'ERROR') structuredLog.error(message, ctx);
+    else if (level === 'WARN') structuredLog.warn(message, ctx);
+    else structuredLog.info(message, ctx);
+
+    // Keep flat-text file — getLogs() reads it for the UI activity panel
     try {
         rotateLogs();
         fs.appendFileSync(LOG_FILE, logEntry);
-    } catch (err) {
-        console.error('Failed to write log:', err);
+    } catch (err: any) {
+        structuredLog.error('failed to write agent log file', { error: err.message });
     }
 }
 

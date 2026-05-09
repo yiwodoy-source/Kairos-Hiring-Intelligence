@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { google } from 'googleapis';
 
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
@@ -11,20 +12,66 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 if (process.env.GOOGLE_REFRESH_TOKEN) {
-    oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_REFRESH_TOKEN
-    });
+    oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
     console.log('[GOOGLE AUTH] Loaded refresh token from environment');
 }
 
-// We need a way to set the refresh token
+// ── Token encryption (AES-256-GCM) ────────────────────────────────────────────
+// Key is derived from JWT_SECRET so no extra env var is needed.
+
+function getEncryptionKey(): Buffer {
+    const secret = process.env.JWT_SECRET || 'nexus-hr-dev-encryption-key';
+    return crypto.scryptSync(secret, 'nexus-hr-salt-v1', 32);
+}
+
+export function encryptToken(plaintext: string): string {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-gcm', getEncryptionKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+export function decryptToken(stored: string): string {
+    const parts = stored.split(':');
+    if (parts.length !== 3) throw new Error('Invalid encrypted token format');
+    const [ivHex, tagHex, encHex] = parts;
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getEncryptionKey(), Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]).toString('utf8');
+}
+
+// ── DB token loading ───────────────────────────────────────────────────────────
+
+let _tokenLoadedFromDb = false;
+
+export async function loadTokenFromDb(): Promise<void> {
+    if (_tokenLoadedFromDb) return;
+    _tokenLoadedFromDb = true;
+    try {
+        const { getDb } = await import('../../db');
+        const db = await getDb();
+        const row = await db.get<{ value: string }>(
+            'SELECT value FROM system_settings WHERE key = ?',
+            ['google_refresh_token']
+        );
+        if (row?.value) {
+            const refreshToken = decryptToken(row.value);
+            oauth2Client.setCredentials({ refresh_token: refreshToken });
+            console.log('[GOOGLE AUTH] Loaded refresh token from database');
+        }
+    } catch (err: any) {
+        console.warn('[GOOGLE AUTH] Could not load refresh token from database:', err.message);
+    }
+}
+
+// ── Credential helpers ─────────────────────────────────────────────────────────
+
 export function setGoogleCredentials(refreshToken: string) {
     if (!refreshToken) {
         throw new Error('Refresh token is required');
     }
-    oauth2Client.setCredentials({
-        refresh_token: refreshToken
-    });
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
     console.log('[GOOGLE AUTH] Credentials updated successfully');
 }
 

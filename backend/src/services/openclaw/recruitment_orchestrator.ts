@@ -1,4 +1,8 @@
 import { runOpenClawResponse } from './client';
+import { OpenClawResponseSchema, type OpenClawResponse } from '../../lib/ai-schemas';
+import { log } from '../../lib/logger';
+
+export type { OpenClawResponse };
 
 type CandidateRecord = {
     id: number;
@@ -82,22 +86,46 @@ function buildSystemPrompt(): string {
     ].join('\n');
 }
 
-export async function runCandidateWorkflowWithOpenClaw(candidate: CandidateRecord, job?: JobRecord | null) {
+export interface OrchestrationResult {
+    parsed: OpenClawResponse;
+    text: string;
+    raw: unknown;
+}
+
+export async function runCandidateWorkflowWithOpenClaw(
+    candidate: CandidateRecord,
+    job?: JobRecord | null
+): Promise<OrchestrationResult> {
     const candidateBrief = buildCandidateBrief(candidate, job);
     const userPrompt = [
         'Decide the next recruiting step for this candidate.',
         'If evidence is incomplete, use Review Required.',
-        candidateBrief
+        candidateBrief,
     ].join('\n');
 
-    return runOpenClawResponse(
+    const result = await runOpenClawResponse(
         [
             { role: 'system', content: buildSystemPrompt() },
-            { role: 'user', content: userPrompt }
+            { role: 'user', content: userPrompt },
         ],
-        {
-            workflow: 'candidate-orchestration',
-            candidateId: String(candidate.id)
-        }
+        { workflow: 'candidate-orchestration', candidateId: String(candidate.id) }
     );
+
+    // Extract JSON from the response text and validate with Zod schema.
+    // .catch() defaults mean a partial response still produces a usable decision.
+    let parsed: OpenClawResponse;
+    try {
+        const jsonMatch = result.text.match(/\{[\s\S]*\}/);
+        const jsonStr = jsonMatch ? jsonMatch[0] : result.text;
+        parsed = OpenClawResponseSchema.parse(JSON.parse(jsonStr));
+    } catch (err: any) {
+        log.warn('openclaw response parse failed, using safe defaults', {
+            candidateId: candidate.id,
+            error: err.message,
+            raw: result.text?.slice(0, 200),
+        });
+        parsed = OpenClawResponseSchema.parse({});
+    }
+
+    return { parsed, text: result.text, raw: result.raw };
 }

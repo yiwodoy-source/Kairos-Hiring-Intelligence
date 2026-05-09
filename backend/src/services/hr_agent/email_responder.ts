@@ -1,5 +1,32 @@
+import crypto from 'crypto';
 import { getGmailClient } from './google_client';
 import { logAgentActivity } from './logger';
+import { withRetry } from '../../lib/retry';
+
+function buildUnsubscribeToken(email: string): string {
+    const secret = process.env.JWT_SECRET || process.env.UNSUBSCRIBE_SECRET || 'unsubscribe-fallback-secret';
+    return crypto.createHmac('sha256', secret).update(email.toLowerCase().trim()).digest('hex');
+}
+
+export function verifyUnsubscribeToken(email: string, token: string): boolean {
+    const expected = buildUnsubscribeToken(email);
+    try {
+        return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(token, 'hex'));
+    } catch {
+        return false;
+    }
+}
+
+function buildUnsubscribeFooter(to: string): string {
+    const token = buildUnsubscribeToken(to);
+    const backendUrl = (process.env.APP_URL || process.env.BACKEND_URL || 'http://localhost:3001').replace(/\/$/, '');
+    const params = new URLSearchParams({ email: to, token });
+    const unsubscribeUrl = `${backendUrl}/api/hr-agent/unsubscribe?${params.toString()}`;
+    return `<p style="font-size:11px;color:#bbb;text-align:center;margin-top:16px;">
+      You received this email because you submitted a job application.<br>
+      <a href="${unsubscribeUrl}" style="color:#aaa;">Unsubscribe from recruitment communications</a>
+    </p>`;
+}
 
 function escapeHtml(text: string): string {
     const map: Record<string, string> = {
@@ -12,7 +39,7 @@ function escapeHtml(text: string): string {
     return text.replace(/[&<>"']/g, m => map[m]);
 }
 
-function buildShell(title: string, accent: string, body: string): string {
+function buildShell(title: string, accent: string, body: string, recipientEmail = ''): string {
     return `
 <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; padding: 30px; color: #333;">
   <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e1e8ed;">
@@ -29,6 +56,7 @@ function buildShell(title: string, accent: string, body: string): string {
     </div>
     <div style="background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #999; border-top: 1px solid #eee;">
       Talent Operations Console | Recruitment Operations
+      ${recipientEmail ? buildUnsubscribeFooter(recipientEmail) : ''}
     </div>
   </div>
 </div>`;
@@ -76,7 +104,8 @@ export async function sendAutomatedReply(
           <li>Two or three interview time windows over the next few working days</li>
         </ul>
       </div>
-      <p style="font-size: 16px; line-height: 1.7; color: #555;">Once we receive your response, our team will review the details and coordinate the next step accordingly.</p>`
+      <p style="font-size: 16px; line-height: 1.7; color: #555;">Once we receive your response, our team will review the details and coordinate the next step accordingly.</p>`,
+                safeTo
             );
         } else {
             htmlBody = buildShell(
@@ -94,7 +123,8 @@ export async function sendAutomatedReply(
         <li>Current location and preferred work arrangement</li>
         <li>Expected compensation and notice period</li>
         <li>Recent role changes, skills, or project highlights</li>
-      </ul>`
+      </ul>`,
+                safeTo
             );
         }
 
@@ -115,10 +145,10 @@ export async function sendAutomatedReply(
             .replace(/\//g, '_')
             .replace(/=+$/, '');
 
-        await gmail.users.messages.send({
-            userId: 'me',
-            requestBody: { raw: encodedMessage },
-        });
+        await withRetry(
+            () => gmail.users.messages.send({ userId: 'me', requestBody: { raw: encodedMessage } }),
+            { label: 'gmail-send-reply', maxAttempts: 3, baseDelayMs: 1000 }
+        );
 
         logAgentActivity(`Sent automated HTML reply to ${safeTo} (Status: ${status})`);
     } catch (error: any) {
@@ -182,10 +212,10 @@ export async function sendInterviewConfirmation(
             .replace(/\//g, '_')
             .replace(/=+$/, '');
 
-        await gmail.users.messages.send({
-            userId: 'me',
-            requestBody: { raw: encodedMessage },
-        });
+        await withRetry(
+            () => gmail.users.messages.send({ userId: 'me', requestBody: { raw: encodedMessage } }),
+            { label: 'gmail-send-interview-confirmation', maxAttempts: 3, baseDelayMs: 1000 }
+        );
 
         logAgentActivity(`Sent interview confirmation to ${safeTo}`);
     } catch (error: any) {

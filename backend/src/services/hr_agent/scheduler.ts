@@ -15,6 +15,19 @@ let job: any = null;
 let lastRunAt: string | null = null;
 let lastSuccessfulRunAt: string | null = null;
 
+// Max CVs to process in a single cycle. Prevents AI quota bursts on a busy inbox.
+const MAX_CVS_PER_CYCLE = Math.min(
+    parseInt(process.env.MAX_CVS_PER_CYCLE || '10', 10),
+    50
+);
+
+// Delay between processing each CV — space out Gmail + AI API calls.
+const CV_PROCESSING_DELAY_MS = parseInt(process.env.CV_PROCESSING_DELAY_MS || '1500', 10);
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function buildQuickSummary(aiData: any, assessment: any): string {
     const candidateName = [aiData.candidate?.first_name, aiData.candidate?.last_name].filter(Boolean).join(' ').trim() || 'Candidate';
     const targetRole = assessment.matchedJobTitle || assessment.inferredTargetRole || aiData.summary?.current_role || 'the role';
@@ -42,16 +55,25 @@ export async function runAgentCycle() {
     logAgentActivity('Starting HR Agent cycle...');
 
     try {
-        const newCVs = await checkNewEmails();
+        const allCVs = await checkNewEmails();
         const db = await getDb();
         const openJobs = await db.all(`
             SELECT id, title, location, description, requirements, status
             FROM jobs
             WHERE status = 'Open'
         `);
-        logAgentActivity(`Found ${newCVs.length} new CV(s) to process.`);
 
-        for (const cv of newCVs) {
+        // Cap to avoid AI/Gmail quota bursts — remaining CVs are picked up next cycle
+        const newCVs = allCVs.slice(0, MAX_CVS_PER_CYCLE);
+        if (allCVs.length > MAX_CVS_PER_CYCLE) {
+            logAgentActivity(`Found ${allCVs.length} CV(s); processing ${MAX_CVS_PER_CYCLE} this cycle, ${allCVs.length - MAX_CVS_PER_CYCLE} deferred.`, 'WARN');
+        } else {
+            logAgentActivity(`Found ${newCVs.length} new CV(s) to process.`);
+        }
+
+        for (const [cvIndex, cv] of newCVs.entries()) {
+            // Throttle between CVs — space out Gmail API + AI calls
+            if (cvIndex > 0) await sleep(CV_PROCESSING_DELAY_MS);
             try {
                 logAgentActivity(`Processing CV from ${cv.email}...`);
                 const text = await extractTextFromPdf(cv.attachmentBuffer);
@@ -213,7 +235,8 @@ export function startAgent() {
         return;
     }
     getDb().catch(err => logAgentActivity(`DB Init failed: ${err.message}`, 'ERROR'));
-    job = cron.schedule('*/1 * * * *', () => {
+    const cronInterval = process.env.CRON_INTERVAL || '*/1 * * * *';
+    job = cron.schedule(cronInterval, () => {
         runAgentCycle().catch(err => {
             logAgentActivity(`Unhandled error: ${err.message}`, 'ERROR');
             isRunning = false;

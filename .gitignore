@@ -55,3 +55,28 @@ node_modules/.vite
 *.tar.gz
 *.err
 App_backup.tsx
+
+# Temporary test/scratch files that may contain credentials or personal data
+tmp-*.json
+tmp-login.json
+tmp-source.json
+test_payload.json
+n8n_test_payload.json
+
+# n8n workflow exports (may contain hardcoded webhook URLs / API tokens)
+n8n_workflow_configured.json
+n8n_workflow_integrated.json
+
+# Backend runtime files (logs, DB, PIDs)
+backend/*.log
+backend/logs/
+backend/database.sqlite
+backend/database.sqlite-shm
+backend/database.sqlite-wal
+backend/data/
+
+# Python test/debug scripts (may contain hardcoded keys)
+check_api.py
+test_*.py
+query_n8n_db.js
+test_*.js

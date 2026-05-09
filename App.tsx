@@ -51,6 +51,145 @@ const SettingsPage  = React.lazy(() => import('./components/SettingsPage').then(
 import { ImportModal } from './components/ImportModal';
 
 // ---------------------------------------------------------------------------
+// NOTIFICATION BELL
+// ---------------------------------------------------------------------------
+interface NotifItem {
+  id: number;
+  first_name: string;
+  last_name: string;
+  applied_role: string;
+  decision_status: string;
+  overall_score: number;
+  created_at: string;
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+interface NotificationBellProps {
+  isAuthenticated: boolean;
+}
+
+const NotificationBell: React.FC<NotificationBellProps> = ({ isAuthenticated }) => {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<NotifItem[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [markedRead, setMarkedRead] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const fetchNotifs = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const data = await apiFetch<{ notifications: NotifItem[]; unreadCount: number }>('/api/hr-agent/notifications');
+      setItems(data.notifications);
+      if (!markedRead) setUnread(data.unreadCount);
+    } catch { /* non-critical */ }
+  }, [isAuthenticated, markedRead]);
+
+  useEffect(() => {
+    fetchNotifs();
+    const t = window.setInterval(fetchNotifs, 60000);
+    return () => window.clearInterval(t);
+  }, [fetchNotifs]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleOpen = () => {
+    setOpen(v => !v);
+  };
+
+  const handleMarkRead = () => {
+    setUnread(0);
+    setMarkedRead(true);
+  };
+
+  const badgeCount = markedRead ? 0 : unread;
+
+  return (
+    <div ref={panelRef} className="relative">
+      <button
+        onClick={handleOpen}
+        className="relative p-2 rounded-lg transition-colors"
+        style={{ color: '#64748B' }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = '#F1F5F9'; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+        aria-label="Notifications"
+      >
+        <Bell className="w-4 h-4" />
+        {badgeCount > 0 ? (
+          <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500" aria-hidden="true" />
+        ) : (
+          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-slate-300" aria-hidden="true" />
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-80 rounded-xl bg-white z-50 overflow-hidden" style={{ border: '1px solid #E4E9F0', boxShadow: '0 10px 30px -4px rgba(15,30,56,0.12), 0 4px 6px -4px rgba(15,30,56,0.06)' }}>
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
+            <span className="text-sm font-semibold" style={{ color: '#0F1E38', fontFamily: '"Plus Jakarta Sans", sans-serif' }}>Notifications</span>
+            {badgeCount > 0 && (
+              <button onClick={handleMarkRead} className="text-xs font-medium hover:underline" style={{ color: '#E8962A' }}>
+                Mark all read
+              </button>
+            )}
+          </div>
+
+          {/* List */}
+          <div className="max-h-80 overflow-y-auto divide-y" style={{ borderColor: '#F8FAFC' }}>
+            {items.length === 0 ? (
+              <p className="px-4 py-6 text-center text-xs text-slate-400">No recent activity</p>
+            ) : (
+              items.map(n => (
+                <div key={n.id} className="px-4 py-3 transition-colors cursor-default" style={{ borderBottom: '1px solid #F8FAFC' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = '#FAFBFD'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold truncate" style={{ color: '#0F1E38' }}>{n.first_name} {n.last_name}</p>
+                      <p className="text-[11px] truncate" style={{ color: '#94A3B8' }}>{n.applied_role}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                        n.decision_status === 'Shortlisted'
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-rose-50 text-rose-600'
+                      }`}>
+                        {n.decision_status}
+                      </span>
+                      <span className="text-[10px]" style={{ color: '#94A3B8' }}>{n.overall_score}% fit</span>
+                    </div>
+                  </div>
+                  <p className="mt-0.5 text-[10px]" style={{ color: '#CBD5E1' }}>{timeAgo(n.created_at)}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // CONSTANTS
 // ---------------------------------------------------------------------------
 const VIEW = {
@@ -108,21 +247,23 @@ const SidebarNavItem = React.memo<NavItemProps>(({ item, isActive, isExpanded, o
     title={!isExpanded ? item.label : undefined}
     aria-label={item.label}
     aria-current={isActive ? 'page' : undefined}
-    className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 text-sm font-medium ${
-      isActive
-        ? 'text-white'
-        : 'text-slate-400 hover:text-white hover:bg-white/5'
-    }`}
-    style={isActive ? { backgroundColor: 'rgba(255,255,255,0.08)' } : undefined}
+    className="relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 text-sm font-medium"
+    style={isActive
+      ? { backgroundColor: 'rgba(232,150,42,0.14)', color: '#E8962A' }
+      : { color: 'rgba(255,255,255,0.45)' }
+    }
+    onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
+    onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
   >
     {/* Left accent bar */}
     {isActive && (
       <span
-        className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-full bg-violet-500"
+        className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-full"
+        style={{ backgroundColor: '#E8962A' }}
         aria-hidden="true"
       />
     )}
-    <item.icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-violet-400' : ''}`} />
+    <item.icon className="w-4 h-4 flex-shrink-0" />
     {isExpanded && <span className="truncate">{item.label}</span>}
   </button>
 ));
@@ -180,8 +321,8 @@ const AgentStatusPills: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => 
   ];
 
   return (
-    <div className="mx-3 mb-3 rounded-lg p-3" style={{ backgroundColor: 'rgba(255,255,255,0.04)' }}>
-      <p className="text-[10px] uppercase tracking-widest text-slate-600 mb-2 font-medium">Agents</p>
+    <div className="mx-3 mb-3 rounded-lg p-3" style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)' }}>
+      <p className="text-[10px] uppercase tracking-widest mb-2 font-semibold" style={{ color: 'rgba(255,255,255,0.25)' }}>Agents</p>
       <div className="space-y-1.5">
         {pills.map(({ label, key }) => (
           <div key={key} className="flex items-center justify-between">
@@ -191,12 +332,9 @@ const AgentStatusPills: React.FC<{ isExpanded: boolean }> = ({ isExpanded }) => 
                 style={{ backgroundColor: DOT_COLORS[status[key]] }}
                 aria-hidden="true"
               />
-              <span className="text-xs text-slate-400">{label}</span>
+              <span className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>{label}</span>
             </div>
-            <span
-              className="text-[10px] font-medium capitalize"
-              style={{ color: DOT_COLORS[status[key]] }}
-            >
+            <span className="text-[10px] font-medium capitalize" style={{ color: DOT_COLORS[status[key]] }}>
               {status[key]}
             </span>
           </div>
@@ -217,26 +355,27 @@ interface UserProfileProps {
 }
 
 const UserProfile = React.memo<UserProfileProps>(({ isExpanded, darkMode, onToggleDarkMode, onLogout }) => (
-  <div className="p-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+  <div className="p-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
     <div className={`flex items-center ${isExpanded ? 'gap-2' : 'justify-center'}`}>
-      <img
-        src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
-        alt="Profile"
-        className="w-8 h-8 rounded-full border flex-shrink-0"
-        style={{ borderColor: 'rgba(255,255,255,0.12)' }}
-        loading="lazy"
-        decoding="async"
-      />
+      <div
+        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
+        style={{ backgroundColor: 'rgba(232,150,42,0.20)', color: '#E8962A' }}
+      >
+        M
+      </div>
       {isExpanded && (
         <>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate leading-tight">Mayur</p>
-            <p className="text-[11px] text-slate-500 truncate">HR Admin</p>
+            <p className="text-sm font-medium truncate leading-tight" style={{ color: 'rgba(255,255,255,0.85)' }}>Mayur</p>
+            <p className="text-[11px] truncate" style={{ color: 'rgba(255,255,255,0.30)' }}>HR Admin</p>
           </div>
           <div className="flex items-center gap-0.5">
             <button
               onClick={onToggleDarkMode}
-              className="p-1.5 rounded-md transition-colors text-slate-400 hover:text-white hover:bg-white/10"
+              className="p-1.5 rounded-md transition-colors"
+              style={{ color: 'rgba(255,255,255,0.35)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#E8962A'; (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(255,255,255,0.07)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.35)'; (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
               title="Toggle theme"
               aria-label="Toggle dark mode"
             >
@@ -244,7 +383,10 @@ const UserProfile = React.memo<UserProfileProps>(({ isExpanded, darkMode, onTogg
             </button>
             <button
               onClick={onLogout}
-              className="p-1.5 rounded-md transition-colors text-slate-400 hover:text-white hover:bg-white/10"
+              className="p-1.5 rounded-md transition-colors"
+              style={{ color: 'rgba(255,255,255,0.35)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#FDA4AF'; (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(255,255,255,0.07)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.35)'; (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
               title="Logout"
               aria-label="Logout"
             >
@@ -281,32 +423,42 @@ const Sidebar = React.memo<SidebarProps>(({
   onToggleDarkMode,
 }) => (
   <aside
-    className={`${isExpanded ? 'w-64' : 'w-16'} flex flex-col flex-shrink-0 transition-all duration-200 z-20`}
-    style={{ backgroundColor: '#0B0F1A' }}
+    className={`${isExpanded ? 'w-60' : 'w-[60px]'} flex flex-col flex-shrink-0 transition-all duration-200 z-20`}
+    style={{ backgroundColor: '#0F1E38' }}
   >
     {/* Logo area */}
     <div
       className="h-14 flex items-center px-3 border-b flex-shrink-0"
-      style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+      style={{ borderColor: 'rgba(255,255,255,0.07)' }}
     >
       <button
         onClick={onToggle}
-        className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors hover:bg-white/10"
-        style={{ backgroundColor: 'rgba(139,92,246,0.15)' }}
+        className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors"
+        style={{ backgroundColor: 'rgba(232,150,42,0.14)' }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(232,150,42,0.22)'; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(232,150,42,0.14)'; }}
         aria-label="Toggle sidebar"
       >
-        <KairosLogo size={18} />
+        <KairosLogo size={18} variant="amber" />
       </button>
       {isExpanded && (
         <div className="ml-2.5 overflow-hidden">
-          <p className="font-bold text-white text-sm leading-tight tracking-tight whitespace-nowrap">Kairos</p>
-          <p className="text-[10px] text-slate-500 whitespace-nowrap">Hiring Intelligence</p>
+          <p
+            className="text-sm font-bold leading-tight whitespace-nowrap"
+            style={{ color: 'rgba(255,255,255,0.90)', fontFamily: '"Plus Jakarta Sans", sans-serif', letterSpacing: '-0.3px' }}
+          >
+            Kairos
+          </p>
+          <p className="text-[10px] whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.28)' }}>Hiring Intelligence</p>
         </div>
       )}
       {isExpanded && (
         <button
           onClick={onToggle}
-          className="ml-auto p-1.5 rounded-md hover:bg-white/10 transition-colors text-slate-500 hover:text-white"
+          className="ml-auto p-1.5 rounded-md transition-colors"
+          style={{ color: 'rgba(255,255,255,0.30)' }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(255,255,255,0.07)'; (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.7)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.30)'; }}
           aria-label="Collapse sidebar"
         >
           <Menu className="w-4 h-4" />
@@ -336,7 +488,7 @@ const Sidebar = React.memo<SidebarProps>(({
 
       {/* Group 2 — Workspace */}
       {isExpanded && (
-        <p className="text-[10px] uppercase tracking-widest text-slate-600 px-3 pb-1.5 font-medium">
+        <p className="text-[10px] uppercase tracking-widest px-3 pb-1.5 font-semibold" style={{ color: 'rgba(255,255,255,0.22)' }}>
           Workspace
         </p>
       )}
@@ -499,12 +651,13 @@ const CommandPalette = React.memo<CommandPaletteProps>(({ isOpen, onClose, emplo
             {filtered.map((item, i) => (
               <button
                 key={`${item.action}-${i}`}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                  i === selectedIndex
-                    ? 'bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400'
-                    : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
-                }`}
-                onMouseEnter={() => setSelectedIndex(i)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
+                style={i === selectedIndex
+                  ? { backgroundColor: 'rgba(232,150,42,0.08)', color: '#E8962A' }
+                  : { color: '#334155' }
+                }
+                onMouseEnter={e => { setSelectedIndex(i); if (i !== selectedIndex) (e.currentTarget as HTMLElement).style.backgroundColor = '#F8FAFC'; }}
+                onMouseLeave={e => { if (i !== selectedIndex) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
                 onClick={() => { onClose(); }}
               >
                 <item.icon className="w-4 h-4 flex-shrink-0" />
@@ -769,7 +922,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 font-sans overflow-hidden transition-colors duration-200">
+    <div className="flex h-screen font-sans overflow-hidden" style={{ backgroundColor: '#F4F6FA' }}>
       {/* Command Palette */}
       <CommandPalette
         isOpen={isCommandPaletteOpen}
@@ -808,22 +961,28 @@ export default function App() {
       {/* Right column */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <header className="h-14 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 px-4 flex items-center justify-between gap-3">
+        <header
+          className="h-14 sticky top-0 z-10 px-4 flex items-center justify-between gap-3"
+          style={{ backgroundColor: '#FFFFFF', borderBottom: '1px solid #E4E9F0' }}
+        >
           {/* Left */}
           <div className="flex items-center gap-3 min-w-0">
             {!isSidebarOpen && (
               <button
                 onClick={toggleSidebar}
-                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors flex-shrink-0"
+                className="p-2 rounded-lg transition-colors flex-shrink-0"
+                style={{ color: '#64748B' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = '#F1F5F9'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
                 aria-label="Expand sidebar"
               >
-                <Menu className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                <Menu className="w-4 h-4" />
               </button>
             )}
-            <div className="flex items-center gap-1.5 text-sm text-slate-400 dark:text-slate-500 min-w-0">
-              <span className="hidden sm:inline truncate">Kairos</span>
-              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 hidden sm:inline" />
-              <span className="font-semibold text-slate-900 dark:text-white truncate">{info.title}</span>
+            <div className="flex items-center gap-1.5 text-sm min-w-0">
+              <span className="hidden sm:inline truncate" style={{ color: '#94A3B8' }}>Kairos</span>
+              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 hidden sm:inline" style={{ color: '#CBD5E1' }} />
+              <span className="font-semibold truncate" style={{ color: '#0F1E38', fontFamily: '"Plus Jakarta Sans", sans-serif' }}>{info.title}</span>
             </div>
           </div>
 
@@ -831,14 +990,14 @@ export default function App() {
           <div className="flex items-center gap-2 flex-shrink-0">
             {/* Live indicator */}
             <div
-              className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                isLive
-                  ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                  : 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400'
-              }`}
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+              style={isLive
+                ? { backgroundColor: '#F0FDF4', color: '#059669' }
+                : { backgroundColor: '#FFFBEB', color: '#D97706' }}
             >
               <span
-                className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}
+                className={`w-1.5 h-1.5 rounded-full ${isLive ? 'animate-pulse' : ''}`}
+                style={{ backgroundColor: isLive ? '#10B981' : '#F59E0B' }}
                 aria-hidden="true"
               />
               {isLive ? 'Live' : 'Offline'}
@@ -847,20 +1006,24 @@ export default function App() {
             {/* Search / Command Palette */}
             <button
               onClick={() => setIsCommandPaletteOpen(true)}
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors text-slate-500 dark:text-slate-400 text-sm"
+              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm"
+              style={{ backgroundColor: '#F4F6FA', color: '#64748B', border: '1px solid #E4E9F0' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = '#EEF2F7'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = '#F4F6FA'; }}
               aria-label="Open search"
             >
               <SearchIcon className="w-3.5 h-3.5" />
               <span className="hidden lg:inline text-xs">Search</span>
-              <kbd className="hidden lg:inline text-[10px] font-mono text-slate-400 dark:text-slate-500">
-                Ctrl K
-              </kbd>
+              <kbd className="hidden lg:inline text-[10px] font-mono" style={{ color: '#94A3B8' }}>Ctrl K</kbd>
             </button>
 
             {/* Import candidates */}
             <button
               onClick={() => setIsImportOpen(true)}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-slate-600 dark:text-slate-400 text-xs font-medium"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-xs font-semibold"
+              style={{ backgroundColor: '#E8962A', color: '#FFFFFF', boxShadow: '0 1px 4px rgba(232,150,42,0.25)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = '#D4851C'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = '#E8962A'; }}
               aria-label="Import candidates"
             >
               <Upload className="w-3.5 h-3.5" />
@@ -868,27 +1031,7 @@ export default function App() {
             </button>
 
             {/* Notification bell */}
-            <button
-              className="relative p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
-              aria-label="Notifications"
-            >
-              <Bell className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-              <span
-                className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-600"
-                aria-hidden="true"
-              />
-            </button>
-
-            {/* Theme toggle */}
-            <button
-              onClick={toggleDarkMode}
-              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
-              aria-label="Toggle theme"
-            >
-              {isDarkMode
-                ? <Sun className="w-4 h-4 text-amber-400" />
-                : <Moon className="w-4 h-4 text-slate-500" />}
-            </button>
+            <NotificationBell isAuthenticated={isAuthenticated} />
           </div>
         </header>
 
@@ -929,7 +1072,7 @@ export default function App() {
               fallback={
                 <div className="flex items-center justify-center h-64">
                   <div className="text-center">
-                    <div className="w-10 h-10 border-4 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                    <div className="w-10 h-10 border-[3px] border-t-transparent rounded-full animate-spin mx-auto mb-3" style={{ borderColor: '#E8962A', borderTopColor: 'transparent' }} />
                     <p className="text-sm text-slate-500 dark:text-slate-400">
                       Loading {info.title.toLowerCase()}...
                     </p>

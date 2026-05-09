@@ -79,17 +79,9 @@ export async function uploadCVToDrive(buffer: Buffer, fileName: string): Promise
             fields: 'id, webViewLink'
         });
 
-        if (folderId && response.data.id) {
-            try {
-                await drive.permissions.create({
-                    fileId: response.data.id,
-                    requestBody: { role: 'reader', type: 'anyone' }
-                });
-            } catch (permErr: any) {
-                logAgentActivity(`Failed to set file permissions: ${permErr.message}`, 'WARN');
-            }
-        }
-
+        // Files remain private to the Drive owner — no public sharing.
+        // The webViewLink is accessible only to authenticated Google accounts
+        // with explicit access; recruiters access it via their own Google session.
         logAgentActivity(`Uploaded CV to Drive: ${response.data.id}`);
         return response.data.webViewLink || '';
     } catch (error: any) {
@@ -115,17 +107,6 @@ export async function uploadTextFileToDrive(content: string, fileName: string): 
             } as any,
             fields: 'id, webViewLink'
         });
-
-        if (response.data.id) {
-            try {
-                await drive.permissions.create({
-                    fileId: response.data.id,
-                    requestBody: { role: 'reader', type: 'anyone' }
-                });
-            } catch (permErr: any) {
-                logAgentActivity(`Failed to set text file permissions: ${permErr.message}`, 'WARN');
-            }
-        }
 
         logAgentActivity(`Uploaded candidate summary to Drive: ${response.data.id}`);
         return response.data.webViewLink || '';
