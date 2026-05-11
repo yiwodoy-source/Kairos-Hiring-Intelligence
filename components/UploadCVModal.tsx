@@ -112,9 +112,9 @@ export const UploadCVModal: React.FC<UploadCVModalProps> = ({ onClose, onCandida
       setResult(data);
       setPhase('done');
       onCandidateAdded();
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearInterval(ticker);
-      setError(err.message || 'Upload failed. Please try again.');
+      setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
       setPhase('error');
     }
   }, [file, onCandidateAdded]);

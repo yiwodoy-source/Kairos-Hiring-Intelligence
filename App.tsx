@@ -84,20 +84,22 @@ const NotificationBell: React.FC<NotificationBellProps> = ({ isAuthenticated }) 
   const [markedRead, setMarkedRead] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const fetchNotifs = useCallback(async () => {
-    if (!isAuthenticated) return;
-    try {
-      const data = await apiFetch<{ notifications: NotifItem[]; unreadCount: number }>('/api/hr-agent/notifications');
-      setItems(data.notifications);
-      if (!markedRead) setUnread(data.unreadCount);
-    } catch { /* non-critical */ }
-  }, [isAuthenticated, markedRead]);
+  const markedReadRef = React.useRef(markedRead);
+  markedReadRef.current = markedRead;
 
   useEffect(() => {
-    fetchNotifs();
-    const t = window.setInterval(fetchNotifs, 60000);
+    if (!isAuthenticated) return;
+    const doFetch = async () => {
+      try {
+        const data = await apiFetch<{ notifications: NotifItem[]; unreadCount: number }>('/api/hr-agent/notifications');
+        setItems(data.notifications);
+        if (!markedReadRef.current) setUnread(data.unreadCount);
+      } catch { /* non-critical */ }
+    };
+    doFetch();
+    const t = window.setInterval(doFetch, 60000);
     return () => window.clearInterval(t);
-  }, [fetchNotifs]);
+  }, [isAuthenticated]);
 
   // Close on outside click
   useEffect(() => {
@@ -650,7 +652,7 @@ const CommandPalette = React.memo<CommandPaletteProps>(({ isOpen, onClose, emplo
             )}
             {filtered.map((item, i) => (
               <button
-                key={`${item.action}-${i}`}
+                key={`${item.action}-${item.title}`}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
                 style={i === selectedIndex
                   ? { backgroundColor: 'rgba(232,150,42,0.08)', color: '#E8962A' }

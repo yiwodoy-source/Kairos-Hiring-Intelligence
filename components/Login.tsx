@@ -61,7 +61,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
       });
       const data = await response.json();
       if (response.ok && data.success) {
-        if (data.token) localStorage.setItem('nexus_hr_session_token', data.token);
+        if (data.token) sessionStorage.setItem('nexus_hr_session_token', data.token);
         onLogin(true);
       } else {
         setError(data.message || 'Invalid credentials. Please try again.');

@@ -42,15 +42,16 @@ export class CircuitBreaker implements ICircuitBreaker {
   }
 
   private withTimeout<T>(promise: Promise<T>): Promise<T> {
-    return Promise.race([
-      promise,
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new CircuitBreakerTimeoutError('Execution timeout')),
-          this.timeout
-        )
-      ),
-    ]);
+    return new Promise<T>((resolve, reject) => {
+      const timerId = setTimeout(
+        () => reject(new CircuitBreakerTimeoutError('Execution timeout')),
+        this.timeout
+      );
+      promise.then(
+        (value) => { clearTimeout(timerId); resolve(value); },
+        (err) => { clearTimeout(timerId); reject(err); }
+      );
+    });
   }
 
   private recordSuccess(startTime: number): void {

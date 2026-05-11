@@ -16,6 +16,7 @@ load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scrapers.candidate_scrapers import SerperCandidateSearcher
+from scrapers.selenium_scrapers import SeleniumCandidateScraper
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -188,6 +189,106 @@ def source_naukri():
         
     except Exception as e:
         logger.error(f"Error sourcing from Naukri: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/source-selenium', methods=['POST'])
+def source_selenium():
+    """
+    Source candidates via Selenium scrapers (Naukri + Wellfound).
+    Falls back to DuckDuckGo HTML search if ChromeDriver is unavailable.
+
+    Request body: { "role": "...", "location": "...", "limit": 10 }
+    """
+    try:
+        data = request.get_json() or {}
+        role = data.get('role', '')
+        location = data.get('location', 'India')
+        limit = int(data.get('limit', 10))
+
+        if not role:
+            return jsonify({'error': 'role is required'}), 400
+
+        scraper_sel = SeleniumCandidateScraper(headless=True)
+        try:
+            candidates = scraper_sel.search_all(role, location, limit)
+        finally:
+            scraper_sel.quit()
+
+        return jsonify({
+            'success': True,
+            'candidates': candidates,
+            'count': len(candidates),
+            'source': 'Selenium (Naukri + Wellfound)',
+        })
+    except Exception as e:
+        logger.error(f"Error in source-selenium: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/source-free', methods=['POST'])
+def source_free():
+    """
+    Combined free sourcing: SerperCandidateSearcher (DDG fallback) + Selenium scrapers.
+    No paid API keys required.
+
+    Request body: { "roles": [{"title": "...", "limit": 5}], "location": "India" }
+    """
+    try:
+        data = request.get_json() or {}
+        roles = data.get('roles', [])
+        location = data.get('location', 'India')
+
+        if not roles:
+            return jsonify({'error': 'roles array is required'}), 400
+
+        # Initialise Selenium scraper once (shared driver)
+        sel_scraper = SeleniumCandidateScraper(headless=True)
+        results = []
+        try:
+            for role_obj in roles:
+                title = role_obj.get('title', '')
+                limit = int(role_obj.get('limit', 5))
+                if not title:
+                    continue
+
+                role_candidates = []
+
+                # 1. Serper / DDG search
+                skills_guess = title  # use role title as skills hint
+                serper_candidates = scraper.search_all_platforms(title, skills_guess, location)
+                role_candidates.extend(serper_candidates[:limit])
+
+                # 2. Selenium / DDG fallback
+                selenium_candidates = sel_scraper.search_all(title, location, limit)
+                role_candidates.extend(selenium_candidates)
+
+                # Deduplicate by name
+                seen_names: set = set()
+                unique: list = []
+                for c in role_candidates:
+                    key = c.get('name', '').lower().strip()
+                    if key and key not in seen_names:
+                        seen_names.add(key)
+                        unique.append(c)
+
+                results.append({
+                    'role': title,
+                    'candidates': unique[:limit],
+                    'count': len(unique[:limit]),
+                })
+        finally:
+            sel_scraper.quit()
+
+        total = sum(r['count'] for r in results)
+        return jsonify({
+            'success': True,
+            'results': results,
+            'total': total,
+            'location': location,
+        })
+    except Exception as e:
+        logger.error(f"Error in source-free: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

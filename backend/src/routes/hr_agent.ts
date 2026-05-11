@@ -13,6 +13,9 @@ import { analyzeCandidateCV } from '../services/hr_agent/ai_analyzer';
 import { getLinkedInSessionStatus, writeJobsInput, runLinkedInScout, parseLinkedInOutput } from '../services/sourcer/linkedin_sourcer';
 import { sourceForRoles, ScrapeGraphCandidate } from '../services/sourcer/scrapegraph_sourcer';
 import { sourceWithFirecrawlForRoles, FirecrawlCandidate } from '../services/sourcer/firecrawl_sourcer';
+import { sourceFromGitHub, GitHubCandidate } from '../services/sourcer/github_sourcer';
+import { sourceFromStackOverflow, StackOverflowCandidate } from '../services/sourcer/stackoverflow_sourcer';
+import { sourceFromPython, isPythonSourcerRunning, PythonSourcedCandidate } from '../services/sourcer/python_sourcer';
 import { getScrapeGraphStatus } from '../services/integrations/scrapegraph';
 import { getMergeStatus, getMergeCandidates } from '../services/integrations/merge';
 import { getFirecrawlStatus } from '../services/integrations/firecrawl';
@@ -169,17 +172,15 @@ async function exportAndPersistCandidate(candidate: any, db: any): Promise<{ dri
     return exportResult;
 }
 
-async function syncCandidateExports(db: any, whereClause = ''): Promise<CandidateSyncSummary> {
+async function syncCandidateExports(db: any, shortlistedOnly = false): Promise<CandidateSyncSummary> {
     syncHealth.state = 'running';
     syncHealth.lastAttemptAt = new Date().toISOString();
     syncHealth.lastError = null;
 
-    const candidatesToSync = await db.all(`
-        SELECT id, first_name, last_name, email, phone, location, current_role, years_experience, skills, achievements, overall_score, decision_status, ai_reasoning, source, applied_role, expected_salary, notice_period, communication_status, reply_status, interview_status, interview_scheduled_at, interview_event_id, interview_meet_link, workflow_state, next_action, sourcing_stage, is_sourced, profile_url, company, application_content, quick_summary, drive_file_link
-        FROM candidates
-        ${whereClause}
-        ORDER BY created_at DESC
-    `);
+    const baseSelect = `SELECT id, first_name, last_name, email, phone, location, current_role, years_experience, skills, achievements, overall_score, decision_status, ai_reasoning, source, applied_role, expected_salary, notice_period, communication_status, reply_status, interview_status, interview_scheduled_at, interview_event_id, interview_meet_link, workflow_state, next_action, sourcing_stage, is_sourced, profile_url, company, application_content, quick_summary, drive_file_link FROM candidates`;
+    const candidatesToSync = shortlistedOnly
+        ? await db.all(`${baseSelect} WHERE decision_status = ? ORDER BY created_at DESC`, ['Shortlisted'])
+        : await db.all(`${baseSelect} ORDER BY created_at DESC`);
 
     let sheetsLogged = 0;
     let missingDriveLinks = 0;
@@ -747,6 +748,25 @@ router.post('/toggle', async (req, res) => {
 });
 
 // Get status and logs
+// Vercel Cron Job endpoint — called every minute to run one agent cycle.
+// Secured by CRON_SECRET env var (set in Vercel dashboard).
+router.post('/trigger/cycle', async (req, res) => {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+        const authHeader = req.headers['authorization'];
+        if (authHeader !== `Bearer ${cronSecret}`) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+    }
+    try {
+        await runAgentCycle();
+        res.json({ success: true, ran: true, ts: new Date().toISOString() });
+    } catch (err: unknown) {
+        console.error('[Cron] Agent cycle error:', err);
+        res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'cycle error' });
+    }
+});
+
 router.get('/status', async (req, res) => {
     try {
         const status = getAgentStatus();
@@ -921,7 +941,7 @@ router.post('/sync-candidates', async (_req, res) => {
 router.post('/sync-shortlisted', async (_req, res) => {
     try {
         const db = await getDb();
-        const result = await syncCandidateExports(db, "WHERE decision_status = 'Shortlisted'");
+        const result = await syncCandidateExports(db, true);
 
         res.json({
             success: true,
@@ -1010,6 +1030,52 @@ router.get('/auth/callback', async (req, res) => {
         console.error('[HR Agent] OAuth callback error:', error);
         const appUrl = process.env.APP_URL || 'http://127.0.0.1:3003';
         res.redirect(`${appUrl}/settings?oauth=error&detail=${encodeURIComponent(error.message || 'OAuth callback failed')}`);
+    }
+});
+
+// PATCH job (update status and/or other fields)
+router.patch('/jobs/:id', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({ error: 'Job id must be a positive integer' });
+        }
+
+        const validStatuses = ['Open', 'Closed', 'On Hold'];
+        const { status, title, department, location, description, requirements } = req.body;
+
+        if (status !== undefined && !validStatuses.includes(status)) {
+            return res.status(400).json({ error: `Status must be one of: ${validStatuses.join(', ')}` });
+        }
+
+        const db = await getDb();
+        const existing = await db.get('SELECT * FROM jobs WHERE id = ?', id);
+        if (!existing) return res.status(404).json({ error: 'Job not found' });
+
+        const fields: string[] = [];
+        const values: unknown[] = [];
+
+        if (status !== undefined)      { fields.push('status = ?');      values.push(status); }
+        if (title !== undefined)       { fields.push('title = ?');       values.push(String(title)); }
+        if (department !== undefined)  { fields.push('department = ?');  values.push(String(department)); }
+        if (location !== undefined)    { fields.push('location = ?');    values.push(String(location)); }
+        if (description !== undefined) { fields.push('description = ?'); values.push(String(description)); }
+        if (requirements !== undefined) {
+            fields.push('requirements = ?');
+            values.push(JSON.stringify(requirements));
+        }
+
+        if (fields.length === 0) {
+            return res.status(400).json({ error: 'No updatable fields provided' });
+        }
+
+        values.push(id);
+        await db.run(`UPDATE jobs SET ${fields.join(', ')} WHERE id = ?`, values);
+        const updated = await db.get('SELECT * FROM jobs WHERE id = ?', id);
+        res.json(updated);
+    } catch (err: unknown) {
+        console.error('[HR Agent] Error updating job:', err);
+        res.status(500).json({ error: 'Failed to update job' });
     }
 });
 
@@ -1536,6 +1602,73 @@ router.post('/trigger/sourcer', async (req, res) => {
             }
         }
 
+        // ── GitHub (free — always runs) ───────────────────────────────────
+        {
+            const locationHint = openJobs[0]?.location || 'India';
+            console.log('[Sourcer] GitHub: sourcing', openJobs.length, 'roles from', locationHint, '...');
+            try {
+                const ghResults = await sourceFromGitHub(jobsForScouting, locationHint);
+                for (const { role, candidates, error } of ghResults) {
+                    if (error) { summary.push({ source: 'GitHub', role, found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error }); continue; }
+                    let imported = 0, shortlisted = 0, review = 0, rejected = 0;
+                    for (const c of candidates) {
+                        try {
+                            const r = await importGitHubCandidate(db, c, openJobs);
+                            if (r.imported) { imported++; if (r.status === 'Shortlisted') shortlisted++; else if (r.status === 'Rejected') rejected++; else review++; }
+                        } catch { /* skip */ }
+                    }
+                    summary.push({ source: 'GitHub', role, found: candidates.length, imported, shortlisted, review, rejected });
+                }
+            } catch (err: unknown) {
+                summary.push({ source: 'GitHub', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err instanceof Error ? err.message : 'GitHub sourcer error' });
+            }
+        }
+
+        // ── Stack Overflow (free — always runs) ───────────────────────────
+        {
+            const locationHint = openJobs[0]?.location || 'India';
+            console.log('[Sourcer] Stack Overflow: sourcing', openJobs.length, 'roles...');
+            try {
+                const soResults = await sourceFromStackOverflow(jobsForScouting, locationHint);
+                for (const { role, candidates, error } of soResults) {
+                    if (error) { summary.push({ source: 'Stack Overflow', role, found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error }); continue; }
+                    let imported = 0, shortlisted = 0, review = 0, rejected = 0;
+                    for (const c of candidates) {
+                        try {
+                            const r = await importStackOverflowCandidate(db, c, openJobs);
+                            if (r.imported) { imported++; if (r.status === 'Shortlisted') shortlisted++; else if (r.status === 'Rejected') rejected++; else review++; }
+                        } catch { /* skip */ }
+                    }
+                    summary.push({ source: 'Stack Overflow', role, found: candidates.length, imported, shortlisted, review, rejected });
+                }
+            } catch (err: unknown) {
+                summary.push({ source: 'Stack Overflow', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err instanceof Error ? err.message : 'Stack Overflow sourcer error' });
+            }
+        }
+
+        // ── Python Scraper (Naukri + Wellfound via Selenium/DDG) ──────────
+        const pythonRunning = await isPythonSourcerRunning();
+        if (pythonRunning) {
+            const locationHint = openJobs[0]?.location || 'India';
+            console.log('[Sourcer] Python service online — sourcing via Naukri + Wellfound...');
+            try {
+                const pyResults = await sourceFromPython(jobsForScouting, locationHint);
+                for (const { role, candidates, error } of pyResults) {
+                    if (error) { summary.push({ source: 'Python Scraper', role, found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error }); continue; }
+                    let imported = 0, shortlisted = 0, review = 0, rejected = 0;
+                    for (const c of candidates) {
+                        try {
+                            const r = await importPythonCandidate(db, c, openJobs);
+                            if (r.imported) { imported++; if (r.status === 'Shortlisted') shortlisted++; else if (r.status === 'Rejected') rejected++; else review++; }
+                        } catch { /* skip */ }
+                    }
+                    summary.push({ source: 'Python Scraper', role, found: candidates.length, imported, shortlisted, review, rejected });
+                }
+            } catch (err: unknown) {
+                summary.push({ source: 'Python Scraper', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err instanceof Error ? err.message : 'Python sourcer error' });
+            }
+        }
+
         // ── Merge.dev ATS ─────────────────────────────────────────────────
         if (mergeStatus.enabled) {
             console.log('[Sourcer] Merge.dev: pulling candidates from connected ATS...');
@@ -1562,11 +1695,13 @@ router.post('/trigger/sourcer', async (req, res) => {
         const totalRejected = summary.reduce((s, r) => s + r.rejected, 0);
 
         const activeSources = [
+            'GitHub',
+            'Stack Overflow',
             fcStatus.configured && 'Firecrawl',
             sgStatus.configured && 'ScrapeGraph',
-            liStatus.hasSession && 'LinkedIn',
+            liStatus.hasSession && liStatus.scriptExists && 'LinkedIn',
             mergeStatus.enabled && 'Merge.dev',
-        ].filter(Boolean).join(' + ') || 'no sources configured';
+        ].filter(Boolean).join(' + ');
 
         const message = totalImported > 0
             ? `Sourced ${totalImported} new candidate${totalImported !== 1 ? 's' : ''} via ${activeSources} — ${totalShortlisted} shortlisted, ${totalReview} for review, ${totalRejected} rejected.`
@@ -1597,7 +1732,26 @@ router.get('/sourcer/config', async (_req, res) => {
         `) as { first_name: string; last_name: string; applied_role: string; source: string; created_at: string }[];
 
         const fcStatus2 = getFirecrawlStatus();
+        const pyRunning = await isPythonSourcerRunning();
         res.json({
+            github: {
+                configured: true,
+                enabled: true,
+                authenticated: !!process.env.GITHUB_TOKEN,
+                rateLimit: process.env.GITHUB_TOKEN ? '5000 req/hour' : '60 req/hour (unauthenticated)',
+            },
+            stackoverflow: {
+                configured: true,
+                enabled: true,
+                authenticated: !!process.env.STACKOVERFLOW_KEY,
+                rateLimit: process.env.STACKOVERFLOW_KEY ? '10000 req/day' : '300 req/day (unauthenticated)',
+            },
+            pythonScraper: {
+                running: pyRunning,
+                url: process.env.PYTHON_SOURCER_URL || 'http://localhost:5000',
+                sources: ['Naukri', 'Wellfound'],
+                note: pyRunning ? 'Online' : 'Offline — start with: cd job_sourcing && python api_service.py',
+            },
             linkedin: {
                 sessionActive: liStatus.hasSession,
                 scriptReady: liStatus.scriptExists,
@@ -1795,6 +1949,85 @@ async function importMergeCandidate(db: any, c: any, openJobs: OpenJob[]): Promi
         'Merge.dev', targetRole, content, headline.slice(0, 300)]);
 
     const assessment = runSourcerAssessment(firstName, lastName, email, location, skills, headline, content, targetRole, openJobs);
+    await applyAssessment(db, email, assessment);
+    return { imported: true, status: assessment.status, score: assessment.overallScore };
+}
+
+async function importGitHubCandidate(db: any, c: GitHubCandidate, openJobs: OpenJob[]): Promise<ImportResult> {
+    const { firstName, lastName } = splitName(c.name || c.profileUrl.split('/').pop() || 'Unknown');
+    const email = c.email && c.email.includes('@')
+        ? c.email
+        : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.gh@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
+
+    const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
+    if (existing) return { imported: false };
+
+    const skillsJson = JSON.stringify(c.skills.slice(0, 20));
+    await db.run(`
+        INSERT INTO candidates (
+            first_name, last_name, email, current_role, location,
+            skills, source, applied_role, is_sourced, sourcing_stage,
+            profile_url, application_content, quick_summary,
+            decision_status, communication_status, reply_status, interview_status,
+            workflow_state, next_action
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
+    `, [firstName, lastName, email, c.headline.slice(0, 200), c.location.slice(0, 200), skillsJson,
+        'GitHub', c.jobRole, c.profileUrl.slice(0, 500), c.about.slice(0, 2000), c.headline.slice(0, 300)]);
+
+    const assessment = runSourcerAssessment(firstName, lastName, email, c.location, c.skills, c.headline, c.about, c.jobRole, openJobs);
+    await applyAssessment(db, email, assessment);
+    return { imported: true, status: assessment.status, score: assessment.overallScore };
+}
+
+async function importStackOverflowCandidate(db: any, c: StackOverflowCandidate, openJobs: OpenJob[]): Promise<ImportResult> {
+    const { firstName, lastName } = splitName(c.name || 'Unknown User');
+    const email = c.email && c.email.includes('@')
+        ? c.email
+        : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.so@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
+
+    const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
+    if (existing) return { imported: false };
+
+    const skillsJson = JSON.stringify(c.skills.slice(0, 20));
+    await db.run(`
+        INSERT INTO candidates (
+            first_name, last_name, email, current_role, location,
+            skills, source, applied_role, is_sourced, sourcing_stage,
+            profile_url, application_content, quick_summary,
+            decision_status, communication_status, reply_status, interview_status,
+            workflow_state, next_action
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
+    `, [firstName, lastName, email, c.headline.slice(0, 200), c.location.slice(0, 200), skillsJson,
+        'Stack Overflow', c.jobRole, c.profileUrl.slice(0, 500), c.about.slice(0, 2000), c.headline.slice(0, 300)]);
+
+    const assessment = runSourcerAssessment(firstName, lastName, email, c.location, c.skills, c.headline, c.about, c.jobRole, openJobs);
+    await applyAssessment(db, email, assessment);
+    return { imported: true, status: assessment.status, score: assessment.overallScore };
+}
+
+async function importPythonCandidate(db: any, c: PythonSourcedCandidate, openJobs: OpenJob[]): Promise<ImportResult> {
+    const { firstName, lastName } = splitName(c.name || 'Unknown');
+    const suffix = c.source.toLowerCase().replace(/[^a-z]/g, '').slice(0, 4) || 'py';
+    const email = c.email && c.email.includes('@')
+        ? c.email
+        : `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${suffix}@sourced.kairos`.replace(/\s+/g, '').replace(/\.+/g, '.');
+
+    const existing = await db.get(`SELECT id FROM candidates WHERE email = ?`, [email]);
+    if (existing) return { imported: false };
+
+    const skillsJson = JSON.stringify(c.skills.slice(0, 20));
+    await db.run(`
+        INSERT INTO candidates (
+            first_name, last_name, email, current_role, location,
+            skills, source, applied_role, is_sourced, sourcing_stage,
+            profile_url, application_content, quick_summary,
+            decision_status, communication_status, reply_status, interview_status,
+            workflow_state, next_action
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'Discovered', ?, ?, ?, 'Review Required', 'Not Contacted', 'No Reply', 'Not Scheduled', 'New Intake', 'Screen candidate')
+    `, [firstName, lastName, email, c.headline.slice(0, 200), c.location.slice(0, 200), skillsJson,
+        c.source, c.job_role, c.profile_url.slice(0, 500), c.about.slice(0, 2000), c.headline.slice(0, 300)]);
+
+    const assessment = runSourcerAssessment(firstName, lastName, email, c.location, c.skills, c.headline, c.about, c.job_role, openJobs);
     await applyAssessment(db, email, assessment);
     return { imported: true, status: assessment.status, score: assessment.overallScore };
 }

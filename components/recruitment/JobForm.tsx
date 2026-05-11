@@ -69,8 +69,8 @@ export const JobForm: React.FC<JobFormProps> = ({ onSave, onCancel }) => {
       };
 
       onSave(newJob);
-    } catch (err: any) {
-      setSaveError(err?.message || 'Failed to save job. Please try again.');
+    } catch (err: unknown) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save job. Please try again.');
     } finally {
       setIsSaving(false);
     }

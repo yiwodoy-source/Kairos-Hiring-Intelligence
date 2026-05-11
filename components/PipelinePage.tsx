@@ -289,6 +289,12 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
   const [outreachSending, setOutreachSending] = useState(false);
   const [outreachMessage, setOutreachMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  useEffect(() => {
+    if (outreachMessage?.type !== 'success') return;
+    const id = setTimeout(() => setOutreachMessage(null), 3000);
+    return () => clearTimeout(id);
+  }, [outreachMessage]);
+
   // WhatsApp state
   const [whatsappSending, setWhatsappSending] = useState(false);
   const [whatsappMessage, setWhatsappMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -340,13 +346,13 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
       reasoning.confidence !== undefined);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setEventsLoading(true);
-    apiFetch<CandidateEvent[]>(`/api/hr-agent/candidates/${candidate.id}/events`)
-      .then((data) => { if (!cancelled) { setEvents(data ?? []); } })
-      .catch(() => { if (!cancelled) setEvents([]); })
-      .finally(() => { if (!cancelled) setEventsLoading(false); });
-    return () => { cancelled = true; };
+    apiFetch<CandidateEvent[]>(`/api/hr-agent/candidates/${candidate.id}/events`, { signal: controller.signal })
+      .then((data) => { setEvents(data ?? []); })
+      .catch((err) => { if (err?.name !== 'AbortError') setEvents([]); })
+      .finally(() => { if (!controller.signal.aborted) setEventsLoading(false); });
+    return () => { controller.abort(); };
   }, [candidate.id]);
 
   const handleStatusSelect = async (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -365,8 +371,8 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
         body: JSON.stringify({ candidateId: candidate.id }),
       });
       setWhatsappMessage({ text: 'WhatsApp sent ✓', type: 'success' });
-    } catch (err: any) {
-      const detail = err?.message || 'Failed to send WhatsApp';
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : 'Failed to send WhatsApp';
       setWhatsappMessage({ text: detail.includes('not configured') ? 'WhatsApp not configured' : detail, type: 'error' });
     } finally {
       setWhatsappSending(false);
@@ -383,7 +389,6 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
       });
       setOutreachMessage({ text: 'Email sent ✓', type: 'success' });
       onCandidateUpdate(candidate.id, { communicationStatus: 'Outreach Sent' });
-      setTimeout(() => setOutreachMessage(null), 3000);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to send email';
       setOutreachMessage({ text: message, type: 'error' });
@@ -627,9 +632,9 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
 
               {slots.length > 0 && (
                 <div className="mt-3 space-y-2">
-                  {slots.map((slot, idx) => (
+                  {slots.map((slot) => (
                     <label
-                      key={idx}
+                      key={`${slot.start}-${slot.end ?? slot.label}`}
                       className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
                         selectedSlot?.start === slot.start
                           ? 'border-amber-500 bg-amber-50'

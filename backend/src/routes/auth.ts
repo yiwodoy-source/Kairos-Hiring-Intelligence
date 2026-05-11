@@ -60,16 +60,9 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(500).json({ success: false, message: 'Authentication service error' });
     }
   } else if (isUserMatch && !adminPasswordHash) {
-    // SECURITY: This is a fallback and should never be used in production
-    console.error('[AUTH] CRITICAL: No ADMIN_PASSWORD_HASH configured. Using plaintext comparison.');
-    const adminPasswordPlain = process.env.ADMIN_PASSWORD;
-    if (!adminPasswordPlain) {
-      console.error('[AUTH] CRITICAL: No admin password configured at all!');
-      // Always return same error to prevent enumeration
-      await bcrypt.compare('dummy', '$2a$10$abcdefghijklmnopqrstuvwxyz0123456789'); // Dummy comparison for timing
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-    isPasswordMatch = String(password) === adminPasswordPlain;
+    console.error('[AUTH] CRITICAL: ADMIN_PASSWORD_HASH is not configured. Login blocked.');
+    await bcrypt.compare('dummy', '$2a$10$abcdefghijklmnopqrstuvwxyz0123456789');
+    return res.status(500).json({ success: false, message: 'Server authentication is not configured. Set ADMIN_PASSWORD_HASH.' });
   } else {
     // User doesn't match - perform dummy hash comparison to prevent timing attacks
     await bcrypt.compare('dummy', '$2a$10$abcdefghijklmnopqrstuvwxyz0123456789');

@@ -1,11 +1,22 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run build && cd backend && npm install && npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": "vite",
+
+  "functions": {
+    "api/index.ts": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+
   "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
+
   "headers": [
     {
       "source": "/(.*)",
@@ -20,6 +31,13 @@
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
       ]
+    }
+  ],
+
+  "crons": [
+    {
+      "path": "/api/hr-agent/trigger/cycle",
+      "schedule": "* * * * *"
     }
   ]
 }

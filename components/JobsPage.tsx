@@ -497,15 +497,30 @@ export const JobsPage: React.FC<JobsPageProps> = ({ jobs, candidates, setJobs })
     );
   }, [jobs, search]);
 
-  const handleToggleStatus = useCallback((job: JobPosting) => {
+  const handleToggleStatus = useCallback(async (job: JobPosting) => {
     const updated = nextStatus(job.status);
-    setJobs(prev =>
-      prev.map(j => (j.id === job.id ? { ...j, status: updated } : j))
-    );
+    // Optimistic update
+    setJobs(prev => prev.map(j => (j.id === job.id ? { ...j, status: updated } : j)));
+    try {
+      await apiFetch(`/api/hr-agent/jobs/${job.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: updated }),
+      });
+    } catch {
+      // Revert on failure
+      setJobs(prev => prev.map(j => (j.id === job.id ? { ...j, status: job.status } : j)));
+    }
   }, [setJobs]);
 
-  const handleDelete = useCallback((job: JobPosting) => {
+  const handleDelete = useCallback(async (job: JobPosting) => {
+    // Optimistic update
     setJobs(prev => prev.filter(j => j.id !== job.id));
+    try {
+      await apiFetch(`/api/hr-agent/jobs/${job.id}`, { method: 'DELETE' });
+    } catch {
+      // Revert on failure
+      setJobs(prev => [job, ...prev]);
+    }
   }, [setJobs]);
 
   const handleJobCreated = useCallback((newJob: JobPosting) => {

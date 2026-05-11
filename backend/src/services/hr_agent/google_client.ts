@@ -17,10 +17,12 @@ if (process.env.GOOGLE_REFRESH_TOKEN) {
 }
 
 // ── Token encryption (AES-256-GCM) ────────────────────────────────────────────
-// Key is derived from JWT_SECRET so no extra env var is needed.
 
 function getEncryptionKey(): Buffer {
-    const secret = process.env.JWT_SECRET || 'nexus-hr-dev-encryption-key';
+    const secret = process.env.GOOGLE_TOKEN_ENCRYPTION_KEY || process.env.JWT_SECRET;
+    if (!secret) {
+        throw new Error('GOOGLE_TOKEN_ENCRYPTION_KEY (or JWT_SECRET fallback) must be configured to encrypt Google tokens.');
+    }
     return crypto.scryptSync(secret, 'nexus-hr-salt-v1', 32);
 }
 

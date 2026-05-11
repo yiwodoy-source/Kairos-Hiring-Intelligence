@@ -1,12 +1,15 @@
-const configuredApiBaseUrl =
-  (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_API_URL?.trim();
+/// <reference types="vite/client" />
+
+const API_PORT = 3001;
+
+const configuredApiBaseUrl = import.meta.env.VITE_API_URL?.trim();
 
 function resolveApiBaseUrl(): string {
   if (typeof window === 'undefined') {
-    return configuredApiBaseUrl || 'http://localhost:3001';
+    return configuredApiBaseUrl || `http://localhost:${API_PORT}`;
   }
 
-  const browserBaseUrl = `${window.location.protocol}//${window.location.hostname}:3001`;
+  const browserBaseUrl = `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
 
   if (!configuredApiBaseUrl) {
     return browserBaseUrl;
@@ -17,8 +20,9 @@ function resolveApiBaseUrl(): string {
     const configuredHost = configuredUrl.hostname.toLowerCase();
     const browserHost = window.location.hostname.toLowerCase();
 
-    if ((configuredHost === '127.0.0.1' || configuredHost === 'localhost') && browserHost !== configuredHost) {
-      return `${configuredUrl.protocol}//${browserHost}:${configuredUrl.port || '3001'}`;
+    const isLoopback = (h: string) => h === 'localhost' || h === '127.0.0.1' || h === '::1';
+    if ((configuredHost === '127.0.0.1' || configuredHost === 'localhost') && browserHost !== configuredHost && !isLoopback(browserHost)) {
+      return `${configuredUrl.protocol}//${browserHost}:${configuredUrl.port || String(API_PORT)}`;
     }
 
     return configuredApiBaseUrl;
@@ -40,15 +44,18 @@ export class ApiError extends Error {
 }
 
 export function getAuthToken(): string | null {
-  return localStorage.getItem('nexus_hr_session_token') || localStorage.getItem('nexus_hr_token');
+  return sessionStorage.getItem('nexus_hr_session_token') || sessionStorage.getItem('nexus_hr_token');
 }
 
 export function clearAuthTokens(): void {
+  sessionStorage.removeItem('nexus_hr_session_token');
+  sessionStorage.removeItem('nexus_hr_token');
+  // Clean up legacy localStorage keys
   localStorage.removeItem('nexus_hr_session_token');
   localStorage.removeItem('nexus_hr_token');
 }
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiFetch<T>(path: string, init: RequestInit = {}, timeoutMs = 30000): Promise<T> {
   const token = getAuthToken();
   const headers = new Headers(init.headers);
 
@@ -60,10 +67,23 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // Merge caller-supplied signal with our timeout signal
+  const signal = init.signal
+    ? (AbortSignal as { any?: (...s: AbortSignal[]) => AbortSignal }).any?.([init.signal, controller.signal]) ?? controller.signal
+    : controller.signal;
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers,
+      signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     let message = `Request failed: ${response.status} ${response.statusText}`;

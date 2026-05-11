@@ -1093,8 +1093,8 @@ export const AgentsPage: React.FC = () => {
       );
       setActionBanner({ type: 'success', message: result.message });
       await fetchData(true);
-    } catch (err: any) {
-      setActionBanner({ type: 'error', message: err?.message || 'AI Advisor sweep could not be completed.' });
+    } catch (err: unknown) {
+      setActionBanner({ type: 'error', message: err instanceof Error ? err.message : 'AI Advisor sweep could not be completed.' });
     } finally {
       setBulkOcRunning(false);
     }

@@ -63,15 +63,19 @@ export class LifecycleStateMachine {
     return () => this.listeners.delete(listener);
   }
 
-  /** Notify all listeners */
+  /** Notify all listeners; collect and re-throw any errors after all listeners run */
   private notifyListeners(): void {
+    const errors: unknown[] = [];
     this.listeners.forEach(listener => {
       try {
         listener({ ...this.state });
       } catch (error) {
         console.error('[StateMachine] Listener error:', error);
+        errors.push(error);
       }
     });
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, `${errors.length} state machine listener(s) threw`);
   }
 
   /** Validate state transitions */

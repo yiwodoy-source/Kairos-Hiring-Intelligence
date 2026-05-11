@@ -4,3 +4,5 @@ flask==3.0.0
 flask-cors==4.0.0
 duckduckgo_search
 ddgs
+selenium>=4.18.0
+webdriver-manager>=4.0.0

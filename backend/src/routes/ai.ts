@@ -1,6 +1,34 @@
 import express from 'express';
+import { z } from 'zod';
 import { getDb } from '../db';
 import { analyzeCandidate, generateJobDescription, generatePerformanceReview, sourceCandidates, parseCandidateProfile } from '../services/geminiService';
+
+const analyzeCandidateSchema = z.object({
+  candidate: z.record(z.string(), z.unknown()),
+  jobDescription: z.string().min(1).max(10000),
+});
+
+const generateJobDescriptionSchema = z.object({
+  title: z.string().min(1).max(200),
+  skills: z.string().min(1).max(2000),
+});
+
+const generatePerformanceReviewSchema = z.object({
+  employeeName: z.string().min(1).max(200),
+  role: z.string().min(1).max(200),
+  notes: z.string().max(5000).default(''),
+  rating: z.number().min(1).max(10).optional(),
+});
+
+const sourceCandidatesSchema = z.object({
+  role: z.string().min(1).max(200),
+  skills: z.string().max(1000).optional().default(''),
+  location: z.string().max(200).optional().default(''),
+});
+
+const parseCandidateProfileSchema = z.object({
+  profileText: z.string().min(1).max(50000),
+});
 
 const router = express.Router();
 
@@ -83,41 +111,49 @@ async function sourceInternalCandidates(role: string, skills: string, location: 
 }
 
 router.post('/analyzeCandidate', async (req, res) => {
+  const parsed = analyzeCandidateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const { candidate, jobDescription } = req.body;
-    const result = await analyzeCandidate(candidate, jobDescription);
+    const { candidate, jobDescription } = parsed.data;
+    const result = await analyzeCandidate(candidate as Parameters<typeof analyzeCandidate>[0], jobDescription);
     res.json(result);
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('AI analyze error:', err);
-    res.status(500).json({ error: err.message || 'AI error' });
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI error' });
   }
 });
 
 router.post('/generateJobDescription', async (req, res) => {
+  const parsed = generateJobDescriptionSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const { title, skills } = req.body;
+    const { title, skills } = parsed.data;
     const text = await generateJobDescription(title, skills);
     res.json({ text });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('AI generateJobDescription error:', err);
-    res.status(500).json({ error: err.message || 'AI error' });
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI error' });
   }
 });
 
 router.post('/generatePerformanceReview', async (req, res) => {
+  const parsed = generatePerformanceReviewSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const { employeeName, role, notes, rating } = req.body;
-    const text = await generatePerformanceReview(employeeName, role, notes, rating);
+    const { employeeName, role, notes, rating } = parsed.data;
+    const text = await generatePerformanceReview(employeeName, role, notes, rating ?? 0);
     res.json({ text });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('AI generatePerformanceReview error:', err);
-    res.status(500).json({ error: err.message || 'AI error' });
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI error' });
   }
 });
 
 router.post('/sourceCandidates', async (req, res) => {
+  const parsed = sourceCandidatesSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const { role, skills, location } = req.body;
+    const { role, skills, location } = parsed.data;
     const [externalCandidates, internalCandidates] = await Promise.all([
       sourceCandidates(role, skills, location),
       sourceInternalCandidates(role, skills, location)
@@ -137,20 +173,22 @@ router.post('/sourceCandidates', async (req, res) => {
     });
 
     res.json({ candidates: merged });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('AI sourceCandidates error:', err);
-    res.status(500).json({ error: err.message || 'AI error' });
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI error' });
   }
 });
 
 router.post('/parseCandidateProfile', async (req, res) => {
+  const parsed = parseCandidateProfileSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const { profileText } = req.body;
+    const { profileText } = parsed.data;
     const candidate = await parseCandidateProfile(profileText);
     res.json({ candidate });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('AI parseCandidateProfile error:', err);
-    res.status(500).json({ error: err.message || 'AI error' });
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI error' });
   }
 });
 
