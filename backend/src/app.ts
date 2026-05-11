@@ -92,11 +92,14 @@ app.use('/api/hr-agent', (req, res, next) => {
 
 app.get('/api/health', async (_req, res) => {
     let dbOk = false;
+    let dbError: string | undefined;
     try {
         const db = await getDb();
         await db.get('SELECT 1');
         dbOk = true;
-    } catch { /* db unreachable */ }
+    } catch (err: any) {
+        dbError = err?.message;
+    }
 
     const agentStatus = getAgentStatus();
     res.status(dbOk ? 200 : 503).json({
@@ -105,7 +108,7 @@ app.get('/api/health', async (_req, res) => {
         uptime: Math.round(process.uptime()),
         memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
         subsystems: {
-            database: dbOk ? 'ok' : 'unreachable',
+            database: dbOk ? 'ok' : `unreachable: ${dbError}`,
             agent: agentStatus.status,
         },
     });
