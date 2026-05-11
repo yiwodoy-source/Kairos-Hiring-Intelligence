@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build && cd backend && npm install && npm run build",
+  "buildCommand": "npm run build && npm install --prefix backend",
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": "vite",
