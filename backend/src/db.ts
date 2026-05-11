@@ -1,5 +1,3 @@
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
 import path from 'path';
 import { DbAdapter, RunResult, createPostgresAdapter, closePostgresPool } from './db/postgres_adapter';
 
@@ -49,6 +47,13 @@ export async function closeDb(): Promise<void> {
 // ── SQLite initialisation (existing behaviour) ────────────────────────────────
 
 async function initializeSQLite(): Promise<DbAdapter> {
+    // Lazy-load sqlite3 so the native module is only required in local dev
+    // (Vercel serverless uses PostgreSQL via DATABASE_URL — sqlite3 native binaries
+    // are not guaranteed to be compatible with the Lambda runtime).
+    const sqlite3Module = await import('sqlite3');
+    const { open } = await import('sqlite');
+    const sqlite3 = sqlite3Module.default;
+
     const dbPath = path.resolve(process.cwd(), 'database.sqlite');
 
     const sqliteDb = await open({
