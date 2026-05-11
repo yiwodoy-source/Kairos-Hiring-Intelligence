@@ -4,7 +4,9 @@
     "rootDir": "..",
     "outDir": "../.vercel/output/functions",
     "baseUrl": "..",
-    "paths": {}
+    "paths": {},
+    "module": "commonjs",
+    "moduleResolution": "node"
   },
   "include": ["./**/*", "../backend/src/**/*"]
 }
