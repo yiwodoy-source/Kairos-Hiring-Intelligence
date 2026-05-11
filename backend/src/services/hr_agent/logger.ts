@@ -7,10 +7,12 @@ const LOG_FILE = path.join(LOG_DIR, 'hr_agent.log');
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_LOG_FILES = 5;
 
-// Create log directory if it doesn't exist
-if (!fs.existsSync(LOG_DIR)) {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
-}
+// Create log directory if it doesn't exist (no-op on read-only filesystems like Vercel)
+try {
+    if (!fs.existsSync(LOG_DIR)) {
+        fs.mkdirSync(LOG_DIR, { recursive: true });
+    }
+} catch { /* read-only fs (e.g. Vercel) — file logging disabled, structured logs still work */ }
 
 // Rotate logs if they get too large
 function rotateLogs(): void {
