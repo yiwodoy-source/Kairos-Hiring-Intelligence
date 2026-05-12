@@ -3,7 +3,7 @@ import { verifyUnsubscribeToken } from '../services/hr_agent/email_responder';
 import { getDb } from '../db';
 import { runAgentCycle, startAgent, stopAgent, getAgentStatus } from '../services/hr_agent/scheduler';
 import { getLogs } from '../services/hr_agent/logger';
-import { getOAuth2Client, setGoogleCredentials, encryptToken } from '../services/hr_agent/google_client';
+import { getOAuth2Client, setGoogleCredentials, encryptToken, loadTokenFromDb, hasCredentials } from '../services/hr_agent/google_client';
 import { exportCandidateRecord } from '../services/hr_agent/candidate_export';
 import { getInterviewAvailability, scheduleCandidateInterview } from '../services/hr_agent/interview_scheduler';
 import { sendInterviewConfirmation, sendAutomatedReply } from '../services/hr_agent/email_responder';
@@ -1156,8 +1156,14 @@ router.get('/integration-status', async (_req, res) => {
     try {
         const hasClientId = Boolean(process.env.GOOGLE_CLIENT_ID);
         const hasClientSecret = Boolean(process.env.GOOGLE_CLIENT_SECRET);
-        const hasRefreshToken = Boolean(process.env.GOOGLE_REFRESH_TOKEN);
         const oauthConfigured = hasClientId && hasClientSecret;
+
+        // Ensure the stored DB token is loaded into the oauth2Client before checking.
+        // This is the only token source on Vercel (env var GOOGLE_REFRESH_TOKEN is optional).
+        if (oauthConfigured) await loadTokenFromDb();
+
+        // hasRefreshToken is true if a token is available from either the env var OR the DB.
+        const hasRefreshToken = hasCredentials();
 
         // Always generate an auth URL so the UI can offer re-authorization
         let authUrl: string | null = null;
@@ -1179,11 +1185,13 @@ router.get('/integration-status', async (_req, res) => {
         // Live-test the token — don't trust env vars alone
         let tokenValid = false;
         let tokenError: string | null = null;
+        let connectedEmail: string | null = null;
         if (oauthConfigured && hasRefreshToken) {
             try {
                 const gmail = (await import('../services/hr_agent/google_client')).getGmailClient();
-                await gmail.users.getProfile({ userId: 'me' });
+                const profile = await gmail.users.getProfile({ userId: 'me' });
                 tokenValid = true;
+                connectedEmail = profile.data.emailAddress ?? null;
             } catch (err: any) {
                 const msg: string = err?.response?.data?.error || err?.message || 'unknown';
                 tokenError = msg.includes('invalid_grant')
@@ -1200,6 +1208,7 @@ router.get('/integration-status', async (_req, res) => {
             google: {
                 oauthConfigured,
                 connected,
+                connectedEmail,
                 tokenValid,
                 tokenError,
                 gmail: connected,
@@ -1210,7 +1219,8 @@ router.get('/integration-status', async (_req, res) => {
                 missingVars: [
                     !hasClientId     ? 'GOOGLE_CLIENT_ID'     : null,
                     !hasClientSecret ? 'GOOGLE_CLIENT_SECRET' : null,
-                    !hasRefreshToken ? 'GOOGLE_REFRESH_TOKEN' : null,
+                    // Only flag token missing if there's really no token (env var AND DB)
+                    !hasRefreshToken ? 'GOOGLE_REFRESH_TOKEN (env) or OAuth authorization' : null,
                 ].filter(Boolean) as string[],
             },
             whatsapp: {

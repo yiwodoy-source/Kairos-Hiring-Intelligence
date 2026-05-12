@@ -14,11 +14,18 @@ import openClawRoutes from './routes/openclaw';
 import { verifyToken } from './middleware/authMiddleware';
 import { getDb } from './db';
 import { getAgentStatus } from './services/hr_agent/scheduler';
+import { loadTokenFromDb } from './services/hr_agent/google_client';
 import { log } from './lib/logger';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const app = express();
+
+// On Vercel cold starts the server.ts startup path never runs, so load the
+// stored Google OAuth token here instead (no-op if not configured or already loaded).
+if (process.env.GOOGLE_CLIENT_ID) {
+    loadTokenFromDb().catch(() => { /* logged inside loadTokenFromDb */ });
+}
 
 // ── Security ──────────────────────────────────────────────────────────────────
 

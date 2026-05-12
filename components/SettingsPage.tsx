@@ -7,7 +7,6 @@ import {
   Wifi,
   WifiOff,
   MessageSquare,
-  ChevronRight,
   RotateCcw,
 } from 'lucide-react';
 import { apiFetch } from '../services/apiClient';
@@ -19,6 +18,7 @@ import { apiFetch } from '../services/apiClient';
 interface GoogleStatus {
   oauthConfigured: boolean;
   connected: boolean;
+  connectedEmail: string | null;
   tokenValid: boolean;
   tokenError: string | null;
   gmail: boolean;
@@ -117,56 +117,6 @@ function Card({ children, className = '' }: { children: React.ReactNode; classNa
 }
 
 // ---------------------------------------------------------------------------
-// Google connect instructions card
-// ---------------------------------------------------------------------------
-
-function ConnectInstructionsCard() {
-  return (
-    <div className="mt-4 rounded-xl bg-amber-50 border border-violet-200 p-4">
-      <p className="text-sm font-semibold text-violet-800 mb-3 flex items-center gap-2">
-        <ChevronRight className="w-4 h-4" />
-        Next steps after clicking Connect
-      </p>
-      <ol className="space-y-2 text-sm text-slate-700">
-        <li className="flex gap-2">
-          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500 text-slate-800 text-xs font-bold flex items-center justify-center">
-            1
-          </span>
-          <span>Approve all requested Google permissions in the tab that opened.</span>
-        </li>
-        <li className="flex gap-2">
-          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500 text-slate-800 text-xs font-bold flex items-center justify-center">
-            2
-          </span>
-          <span>Copy the refresh token displayed on the confirmation screen.</span>
-        </li>
-        <li className="flex gap-2">
-          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500 text-slate-800 text-xs font-bold flex items-center justify-center">
-            3
-          </span>
-          <span>
-            Open{' '}
-            <code className="px-1 py-0.5 rounded bg-slate-200 text-xs font-mono">
-              backend/.env
-            </code>{' '}
-            and add:&nbsp;
-            <code className="px-1 py-0.5 rounded bg-slate-200 text-xs font-mono">
-              GOOGLE_REFRESH_TOKEN=&lt;paste-token-here&gt;
-            </code>
-          </span>
-        </li>
-        <li className="flex gap-2">
-          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500 text-slate-800 text-xs font-bold flex items-center justify-center">
-            4
-          </span>
-          <span>Restart the backend server and refresh this page.</span>
-        </li>
-      </ol>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -178,7 +128,6 @@ export function SettingsPage() {
   const [sourcingTesting, setSourcingTesting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showInstructions, setShowInstructions] = useState(false);
   const [polling, setPolling] = useState(false);
   const [oauthRedirect, setOauthRedirect] = useState<OAuthRedirectState>(null);
   const [oauthErrorDetail, setOauthErrorDetail] = useState<string | null>(null);
@@ -257,7 +206,6 @@ export function SettingsPage() {
   function handleConnectGoogle() {
     if (status?.google?.authUrl) {
       window.open(status.google.authUrl, '_blank', 'noopener,noreferrer');
-      setShowInstructions(false);
       startPolling();
     }
   }
@@ -339,9 +287,16 @@ export function SettingsPage() {
               {status.google.connected && (
                 <div className="mb-4 flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3">
                   <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                  <span className="text-sm font-semibold text-emerald-700">
-                    All Google services active
-                  </span>
+                  <div>
+                    <span className="text-sm font-semibold text-emerald-700">
+                      All Google services active
+                    </span>
+                    {status.google.connectedEmail && (
+                      <p className="text-xs text-emerald-600 mt-0.5">
+                        Connected as {status.google.connectedEmail}
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 

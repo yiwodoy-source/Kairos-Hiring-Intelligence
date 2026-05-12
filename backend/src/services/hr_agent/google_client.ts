@@ -45,26 +45,40 @@ export function decryptToken(stored: string): string {
 
 // ── DB token loading ───────────────────────────────────────────────────────────
 
-let _tokenLoadedFromDb = false;
+// Promise singleton — ensures the DB is queried exactly once per process lifetime,
+// even if multiple callers invoke loadTokenFromDb() concurrently on a cold start.
+let _tokenLoadPromise: Promise<void> | null = null;
 
-export async function loadTokenFromDb(): Promise<void> {
-    if (_tokenLoadedFromDb) return;
-    _tokenLoadedFromDb = true;
-    try {
-        const { getDb } = await import('../../db');
-        const db = await getDb();
-        const row = await db.get<{ value: string }>(
-            'SELECT value FROM system_settings WHERE key = ?',
-            ['google_refresh_token']
-        );
-        if (row?.value) {
-            const refreshToken = decryptToken(row.value);
-            oauth2Client.setCredentials({ refresh_token: refreshToken });
-            console.log('[GOOGLE AUTH] Loaded refresh token from database');
+export function loadTokenFromDb(): Promise<void> {
+    if (_tokenLoadPromise) return _tokenLoadPromise;
+    _tokenLoadPromise = (async () => {
+        try {
+            const { getDb } = await import('../../db');
+            const db = await getDb();
+            const row = await db.get<{ value: string }>(
+                'SELECT value FROM system_settings WHERE key = ?',
+                ['google_refresh_token']
+            );
+            if (row?.value) {
+                const refreshToken = decryptToken(row.value);
+                oauth2Client.setCredentials({ refresh_token: refreshToken });
+                console.log('[GOOGLE AUTH] Loaded refresh token from database');
+            }
+        } catch (err: any) {
+            console.warn('[GOOGLE AUTH] Could not load refresh token from database:', err.message);
+            // Reset so a transient DB error doesn't permanently block future loads
+            _tokenLoadPromise = null;
         }
-    } catch (err: any) {
-        console.warn('[GOOGLE AUTH] Could not load refresh token from database:', err.message);
-    }
+    })();
+    return _tokenLoadPromise;
+}
+
+/** True if the oauth2Client has a refresh token (env var or DB-loaded). */
+export function hasCredentials(): boolean {
+    return Boolean(
+        process.env.GOOGLE_REFRESH_TOKEN ||
+        (oauth2Client.credentials as any)?.refresh_token
+    );
 }
 
 // ── Credential helpers ─────────────────────────────────────────────────────────
