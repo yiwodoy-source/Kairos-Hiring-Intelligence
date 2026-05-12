@@ -29,10 +29,11 @@ function getPool(): Pool {
         connectionTimeoutMillis: 10000,
     };
 
-    // Supabase and other hosted Postgres providers use valid TLS certs —
-    // enable SSL with full certificate verification.
+    // Supabase direct connections have valid certs; the PgBouncer transaction
+    // pooler (pooler.supabase.com) uses a self-signed cert — skip verification there.
     if (url.includes('supabase.co') || url.includes('pooler.supabase.com') || url.startsWith('postgresql://') || url.startsWith('postgres://')) {
-        cfg.ssl = { rejectUnauthorized: true };
+        const isPooler = url.includes('pooler.supabase.com');
+        cfg.ssl = { rejectUnauthorized: !isPooler };
     }
 
     pool = new Pool(cfg);
