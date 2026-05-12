@@ -379,7 +379,7 @@ async function migrateSchemaPostgres(db: DbAdapter) {
                           WHEN email LIKE '%@internal.local' THEN 'Manual Upload'
                           ELSE 'Historical Import' END,
             applied_role = CASE WHEN applied_role IS NOT NULL AND TRIM(applied_role) <> '' THEN applied_role
-                                WHEN current_role IS NOT NULL AND TRIM(current_role) <> '' THEN current_role
+                                WHEN "current_role" IS NOT NULL AND TRIM("current_role") <> '' THEN "current_role"
                                 ELSE 'Role Pending' END,
             expected_salary   = COALESCE(expected_salary, ''),
             notice_period     = COALESCE(notice_period, ''),
@@ -444,7 +444,7 @@ async function migrateSchema(sqliteDb: any) {
                           WHEN email LIKE '%@internal.local' THEN 'Manual Upload'
                           ELSE 'Historical Import' END,
             applied_role = CASE WHEN applied_role IS NOT NULL AND TRIM(applied_role) <> '' THEN applied_role
-                                WHEN current_role IS NOT NULL AND TRIM(current_role) <> '' THEN current_role
+                                WHEN "current_role" IS NOT NULL AND TRIM("current_role") <> '' THEN "current_role"
                                 ELSE 'Role Pending' END,
             expected_salary   = COALESCE(expected_salary, ''),
             notice_period     = COALESCE(notice_period, ''),
@@ -546,7 +546,7 @@ async function normalizeLegacyCandidateRecords(db: DbAdapter) {
         applied_role: string | null;
         application_content: string | null;
         source: string | null;
-    }>(`SELECT id, first_name, last_name, email, current_role, applied_role, application_content, source FROM candidates`);
+    }>(`SELECT id, first_name, last_name, email, "current_role", applied_role, application_content, source FROM candidates`);
 
     for (const row of rows) {
         let firstName = row.first_name || '';
@@ -578,7 +578,7 @@ async function normalizeLegacyCandidateRecords(db: DbAdapter) {
         if (!appliedRole && roleFromContent) appliedRole = roleFromContent;
 
         await db.run(
-            `UPDATE candidates SET first_name = ?, last_name = ?, current_role = ?, applied_role = ? WHERE id = ?`,
+            `UPDATE candidates SET first_name = ?, last_name = ?, "current_role" = ?, applied_role = ? WHERE id = ?`,
             [firstName || 'Candidate', lastName || '', currentRole, appliedRole, row.id]
         );
     }
