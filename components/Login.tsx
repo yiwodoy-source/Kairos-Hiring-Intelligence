@@ -68,7 +68,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         setIsLoading(false);
       }
     } catch {
-      setError('Cannot reach the server. Check backend on port 3001.');
+      setError('Cannot reach the server. Please try again in a moment.');
       setIsLoading(false);
     }
   };

@@ -205,7 +205,12 @@ export function SettingsPage() {
 
   function handleConnectGoogle() {
     if (status?.google?.authUrl) {
-      window.open(status.google.authUrl, '_blank', 'noopener,noreferrer');
+      const popup = window.open(status.google.authUrl, '_blank', 'noopener,noreferrer');
+      if (!popup) {
+        setOauthRedirect('error');
+        setOauthErrorDetail('Popup blocked — please allow popups for this site and try again.');
+        return;
+      }
       startPolling();
     }
   }

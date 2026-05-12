@@ -752,11 +752,9 @@ router.post('/toggle', async (req, res) => {
 // Secured by CRON_SECRET env var (set in Vercel dashboard).
 router.post('/trigger/cycle', async (req, res) => {
     const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-        const authHeader = req.headers['authorization'];
-        if (authHeader !== `Bearer ${cronSecret}`) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
+    const authHeader = req.headers['authorization'];
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+        return res.status(401).json({ error: 'Unauthorized' });
     }
     try {
         await runAgentCycle();

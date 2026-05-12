@@ -867,7 +867,7 @@ export default function App() {
       case VIEW.DASHBOARD:
         return wrap(
           <React.Suspense fallback={null}>
-            <DashboardPage employees={employees} jobs={jobs} candidates={candidates} />
+            <DashboardPage employees={employees} jobs={jobs} candidates={candidates} onNavigate={setActiveView as (v: string) => void} />
           </React.Suspense>
         );
       case VIEW.PIPELINE:
@@ -885,7 +885,7 @@ export default function App() {
       case VIEW.JOBS:
         return wrap(
           <React.Suspense fallback={null}>
-            <JobsPage jobs={jobs} candidates={candidates} setJobs={setJobs} />
+            <JobsPage jobs={jobs} candidates={candidates} setJobs={setJobs} onNavigate={setActiveView as (v: string) => void} />
           </React.Suspense>
         );
       case VIEW.EMPLOYEES:

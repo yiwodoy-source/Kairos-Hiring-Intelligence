@@ -4,7 +4,8 @@ import { logAgentActivity } from './logger';
 import { withRetry } from '../../lib/retry';
 
 function buildUnsubscribeToken(email: string): string {
-    const secret = process.env.JWT_SECRET || process.env.UNSUBSCRIBE_SECRET || 'unsubscribe-fallback-secret';
+    const secret = process.env.JWT_SECRET || process.env.UNSUBSCRIBE_SECRET;
+    if (!secret) throw new Error('JWT_SECRET or UNSUBSCRIBE_SECRET must be configured');
     return crypto.createHmac('sha256', secret).update(email.toLowerCase().trim()).digest('hex');
 }
 

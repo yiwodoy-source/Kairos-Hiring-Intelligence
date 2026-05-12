@@ -27,6 +27,7 @@ interface JobsPageProps {
   jobs: JobPosting[];
   candidates: Candidate[];
   setJobs: React.Dispatch<React.SetStateAction<JobPosting[]>>;
+  onNavigate?: (view: string) => void;
 }
 
 interface NewJobForm {
@@ -117,9 +118,10 @@ interface JobCardProps {
   candidates: Candidate[];
   onToggleStatus: (job: JobPosting) => void;
   onDelete: (job: JobPosting) => void;
+  onViewPipeline?: () => void;
 }
 
-const JobCard = React.memo<JobCardProps>(({ job, candidates, onToggleStatus, onDelete }) => {
+const JobCard = React.memo<JobCardProps>(({ job, candidates, onToggleStatus, onDelete, onViewPipeline }) => {
   const stats = usePipelineStats(job.id, candidates);
   const statusConfig = getStatusConfig(job.status);
   const visibleReqs = job.requirements.slice(0, 3);
@@ -191,7 +193,10 @@ const JobCard = React.memo<JobCardProps>(({ job, candidates, onToggleStatus, onD
 
       {/* Footer actions */}
       <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-        <button className="flex items-center gap-1.5 text-xs font-medium text-amber-600 hover:text-amber-700 transition-colors">
+        <button
+          onClick={onViewPipeline}
+          className="flex items-center gap-1.5 text-xs font-medium text-amber-600 hover:text-amber-700 transition-colors"
+        >
           View pipeline
           <ChevronRight className="w-3.5 h-3.5" />
         </button>
@@ -482,7 +487,7 @@ const NewJobModal: React.FC<NewJobModalProps> = ({ onClose, onCreated }) => {
 // ---------------------------------------------------------------------------
 // JOBS PAGE
 // ---------------------------------------------------------------------------
-export const JobsPage: React.FC<JobsPageProps> = ({ jobs, candidates, setJobs }) => {
+export const JobsPage: React.FC<JobsPageProps> = ({ jobs, candidates, setJobs, onNavigate }) => {
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
 
@@ -581,6 +586,7 @@ export const JobsPage: React.FC<JobsPageProps> = ({ jobs, candidates, setJobs })
               candidates={candidates}
               onToggleStatus={handleToggleStatus}
               onDelete={handleDelete}
+              onViewPipeline={() => onNavigate?.('pipeline')}
             />
           ))}
         </div>

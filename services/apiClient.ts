@@ -9,26 +9,31 @@ function resolveApiBaseUrl(): string {
     return configuredApiBaseUrl || `http://localhost:${API_PORT}`;
   }
 
-  const browserBaseUrl = `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
+  if (configuredApiBaseUrl) {
+    try {
+      const configuredUrl = new URL(configuredApiBaseUrl);
+      const configuredHost = configuredUrl.hostname.toLowerCase();
+      const browserHost = window.location.hostname.toLowerCase();
 
-  if (!configuredApiBaseUrl) {
-    return browserBaseUrl;
-  }
+      const isLoopback = (h: string) => h === 'localhost' || h === '127.0.0.1' || h === '::1';
+      if ((configuredHost === '127.0.0.1' || configuredHost === 'localhost') && browserHost !== configuredHost && !isLoopback(browserHost)) {
+        return `${configuredUrl.protocol}//${browserHost}:${configuredUrl.port || String(API_PORT)}`;
+      }
 
-  try {
-    const configuredUrl = new URL(configuredApiBaseUrl);
-    const configuredHost = configuredUrl.hostname.toLowerCase();
-    const browserHost = window.location.hostname.toLowerCase();
-
-    const isLoopback = (h: string) => h === 'localhost' || h === '127.0.0.1' || h === '::1';
-    if ((configuredHost === '127.0.0.1' || configuredHost === 'localhost') && browserHost !== configuredHost && !isLoopback(browserHost)) {
-      return `${configuredUrl.protocol}//${browserHost}:${configuredUrl.port || String(API_PORT)}`;
+      return configuredApiBaseUrl;
+    } catch {
+      // fall through
     }
-
-    return configuredApiBaseUrl;
-  } catch {
-    return browserBaseUrl;
   }
+
+  // On deployed environments (Vercel, etc.) the API is behind the same origin via rewrites.
+  // Only add the dev port when running locally.
+  const isLocal = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+  if (isLocal) {
+    return `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
+  }
+
+  return window.location.origin;
 }
 
 const API_BASE_URL = resolveApiBaseUrl();
@@ -70,9 +75,14 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}, timeoutM
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   // Merge caller-supplied signal with our timeout signal
-  const signal = init.signal
-    ? (AbortSignal as { any?: (...s: AbortSignal[]) => AbortSignal }).any?.([init.signal, controller.signal]) ?? controller.signal
-    : controller.signal;
+  let signal: AbortSignal = controller.signal;
+  if (init.signal) {
+    if ('any' in AbortSignal && typeof (AbortSignal as any).any === 'function') {
+      signal = (AbortSignal as any).any([init.signal, controller.signal]);
+    } else {
+      init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
 
   let response: Response;
   try {

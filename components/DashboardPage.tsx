@@ -35,6 +35,7 @@ interface DashboardPageProps {
   employees: Employee[];
   jobs: JobPosting[];
   candidates: Candidate[];
+  onNavigate?: (view: string) => void;
 }
 
 interface AgentStatusResponse {
@@ -204,7 +205,7 @@ function PipelineTooltip({ active, payload }: CustomTooltipProps) {
 /* ─────────────────────────────────────────────
    Main Dashboard Component
    ───────────────────────────────────────────── */
-export function DashboardPage({ employees, jobs, candidates }: DashboardPageProps) {
+export function DashboardPage({ employees, jobs, candidates, onNavigate }: DashboardPageProps) {
   const [agentStatus, setAgentStatus] = useState<AgentStatusResponse | null>(null);
   const [agentLoading, setAgentLoading] = useState(true);
 
@@ -476,7 +477,7 @@ export function DashboardPage({ employees, jobs, candidates }: DashboardPageProp
             <button
               className="btn-ghost mt-4 w-full text-xs justify-center"
               type="button"
-              onClick={() => {/* no-op */}}
+              onClick={() => onNavigate?.('agents')}
             >
               View all logs
             </button>

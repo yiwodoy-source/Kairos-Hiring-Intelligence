@@ -8,7 +8,7 @@ const openai = new OpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
   apiKey: process.env.OPENROUTER_API_KEY,
   defaultHeaders: {
-    'HTTP-Referer': 'http://localhost:3000',
+    'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000',
     'X-Title': 'NexusHR AI Agent',
   }
 });
@@ -31,7 +31,12 @@ async function analyzeWithGemini(prompt: string): Promise<any> {
   const jsonMatch = content.match(/\{[\s\S]*\}/);
   const jsonStr = jsonMatch ? jsonMatch[0] : content;
 
-  const raw = JSON.parse(jsonStr);
+  let raw: any;
+  try {
+    raw = JSON.parse(jsonStr);
+  } catch {
+    throw new Error(`Gemini returned unparseable JSON: ${jsonStr.substring(0, 200)}`);
+  }
   if (!raw.candidate || !raw.fit_score) throw new Error('Invalid JSON structure from Gemini');
 
   return CvAnalysisSchema.parse(raw);

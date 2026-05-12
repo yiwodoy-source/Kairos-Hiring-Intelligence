@@ -14,6 +14,7 @@ export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) =>
   const [reviewNotes, setReviewNotes] = useState('');
   const [generatedReview, setGeneratedReview] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   // Optimize: Memoize filtering to prevent recalculation on every render
   const filteredEmployees = useMemo(() => {
@@ -26,14 +27,20 @@ export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) =>
   const handleGenerateReview = useCallback(async () => {
     if (!selectedEmployee) return;
     setIsGenerating(true);
-    const review = await GeminiService.generatePerformanceReview(
-      selectedEmployee.name,
-      selectedEmployee.role,
-      reviewNotes,
-      selectedEmployee.performanceRating
-    );
-    setGeneratedReview(review);
-    setIsGenerating(false);
+    setReviewError(null);
+    try {
+      const review = await GeminiService.generatePerformanceReview(
+        selectedEmployee.name,
+        selectedEmployee.role,
+        reviewNotes,
+        selectedEmployee.performanceRating
+      );
+      setGeneratedReview(review);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : 'Failed to generate review');
+    } finally {
+      setIsGenerating(false);
+    }
   }, [selectedEmployee, reviewNotes]);
 
   return (
@@ -144,6 +151,12 @@ export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) =>
                     {!isGenerating && <Sparkles className="w-4 h-4" />}
                   </button>
                 </div>
+
+                {reviewError && (
+                  <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+                    {reviewError}
+                  </div>
+                )}
 
                 {generatedReview && (
                   <div className="mt-6 bg-slate-50 p-6 rounded-xl border border-slate-200">
