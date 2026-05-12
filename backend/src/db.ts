@@ -228,7 +228,7 @@ async function createTablesPostgres(db: DbAdapter) {
             phone TEXT,
             location TEXT,
             years_experience REAL DEFAULT 0,
-            current_role TEXT,
+            "current_role" TEXT,
             skills TEXT,
             achievements TEXT,
             overall_score INTEGER CHECK(overall_score BETWEEN 0 AND 100),
