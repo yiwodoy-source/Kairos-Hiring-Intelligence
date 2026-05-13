@@ -6,6 +6,7 @@ import { runAgentCycle, startAgent, stopAgent, getAgentStatus } from '../service
 import { getLogs } from '../services/hr_agent/logger';
 import { getKairosStatus, getKairosRegistry, getKairosQueue } from '../agents/index';
 import { sendWhatsAppMessage, getRecentMessages, getConversation, probeWhatsApp, recordInbound } from '../services/whatsapp/whatsapp_client';
+import { getAutoReplySettings, saveAutoReplySettings, handleInboundAutoReply } from '../services/whatsapp/auto_reply';
 import { getOAuth2Client, setGoogleCredentials, encryptToken, loadTokenFromDb, hasCredentials } from '../services/hr_agent/google_client';
 import { exportCandidateRecord } from '../services/hr_agent/candidate_export';
 import { getInterviewAvailability, scheduleCandidateInterview } from '../services/hr_agent/interview_scheduler';
@@ -2423,15 +2424,20 @@ router.post('/whatsapp/send', async (req, res) => {
 // Inbound webhook — OpenClaw posts here when a WhatsApp message arrives
 router.post('/whatsapp/inbound', async (req, res) => {
     try {
-        const { phone, body, candidateEmail } = req.body as {
-            phone: string;
-            body: string;
-            candidateEmail?: string;
-        };
+        // OpenClaw sends: { phone, body } or { from, text } depending on version
+        const raw = req.body as Record<string, any>;
+        const phone: string = raw.phone || raw.from || raw.sender || '';
+        const body: string = raw.body || raw.text || raw.message || '';
+        const candidateEmail: string | undefined = raw.candidateEmail;
+
         if (!phone || !body) {
             return res.status(400).json({ error: 'phone and body required' });
         }
+
         await recordInbound(phone, body, candidateEmail);
+
+        // Auto-reply: check settings + candidate DB + generate AI reply
+        const autoResult = await handleInboundAutoReply(phone, body);
 
         // Queue receive_whatsapp task for the WhatsAppAgent to process
         const queue = getKairosQueue();
@@ -2443,11 +2449,78 @@ router.post('/whatsapp/inbound', async (req, res) => {
                 status: 'pending',
                 priority: 3,
                 maxRetries: 2,
-                payload: { phone, body, candidateEmail },
+                payload: { phone, body, candidateEmail, autoReplied: autoResult.replied },
             });
         }
 
-        res.json({ received: true });
+        res.json({ received: true, autoReply: autoResult });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Auto-reply settings — GET
+router.get('/whatsapp/settings', async (_req, res) => {
+    try {
+        const settings = await getAutoReplySettings();
+        res.json({ settings });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Auto-reply settings — POST
+router.post('/whatsapp/settings', async (req, res) => {
+    try {
+        const { enabled, candidateOnly, mode, customPrompt } = req.body as {
+            enabled?: boolean;
+            candidateOnly?: boolean;
+            mode?: 'immediate' | 'draft';
+            customPrompt?: string;
+        };
+        await saveAutoReplySettings({ enabled, candidateOnly, mode, customPrompt });
+        const updated = await getAutoReplySettings();
+        res.json({ ok: true, settings: updated });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Conversations — unique phones with last message
+router.get('/whatsapp/conversations', async (_req, res) => {
+    try {
+        const db = await getDb();
+        const convos = await db.all<{
+            phone: string;
+            last_body: string;
+            last_direction: string;
+            last_at: string;
+            total: number;
+            unread: number;
+        }>(
+            `SELECT phone,
+                    MAX(body) AS last_body,
+                    (SELECT direction FROM whatsapp_messages m2 WHERE m2.phone = m1.phone ORDER BY created_at DESC LIMIT 1) AS last_direction,
+                    MAX(created_at) AS last_at,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) AS unread
+             FROM whatsapp_messages m1
+             GROUP BY phone
+             ORDER BY last_at DESC
+             LIMIT 100`
+        );
+        // Enrich with candidate info
+        const enriched = await Promise.all(convos.map(async c => {
+            const digits = c.phone.replace(/\D/g, '').slice(-10);
+            const candidate = await db.get<{ first_name: string; last_name: string; decision_status: string; applied_role: string }>(
+                `SELECT first_name, last_name, decision_status, applied_role FROM candidates
+                 WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', '') LIKE ?
+                 LIMIT 1`,
+                [`%${digits}`]
+            );
+            return { ...c, candidate: candidate ?? null };
+        }));
+        res.json({ conversations: enriched });
     } catch (err: unknown) {
         res.status(500).json({ error: errMsg(err) });
     }

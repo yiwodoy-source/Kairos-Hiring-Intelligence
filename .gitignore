@@ -80,3 +80,5 @@ check_api.py
 test_*.py
 query_n8n_db.js
 test_*.js
+
+.vercel

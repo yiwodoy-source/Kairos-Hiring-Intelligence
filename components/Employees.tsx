@@ -1,20 +1,73 @@
 ﻿
 import React, { useState, useMemo, useCallback } from 'react';
 import { Employee, EmployeeStatus } from '../types.ts';
-import { Star, Search, Sparkles, Users, BookUser } from 'lucide-react';
+import { Star, Search, Sparkles, Users, BookUser, X, Plus, Loader2 } from 'lucide-react';
 import { GeminiService } from '../services/geminiService';
+import { apiFetch } from '../services/apiClient';
 
 interface EmployeesProps {
   employees: Employee[];
+  onEmployeeAdded?: () => void;
 }
 
-export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) => {
+const EMPTY_FORM = {
+  name: '',
+  email: '',
+  role: '',
+  department: '',
+  status: EmployeeStatus.ACTIVE as string,
+  join_date: new Date().toISOString().split('T')[0],
+  performance_rating: '3',
+  avatar: '',
+};
+
+export const Employees: React.FC<EmployeesProps> = React.memo(({ employees, onEmployeeAdded }) => {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
   const [generatedReview, setGeneratedReview] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addForm, setAddForm] = useState(EMPTY_FORM);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+
+  const handleAddSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addForm.name.trim() || !addForm.email.trim() || !addForm.role.trim() || !addForm.department.trim()) {
+      setAddError('Please fill in all required fields.');
+      return;
+    }
+    setAddError(null);
+    setIsAdding(true);
+    try {
+      await apiFetch('/api/hr-agent/employees', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: addForm.name.trim(),
+          email: addForm.email.trim(),
+          role: addForm.role.trim(),
+          department: addForm.department.trim(),
+          status: addForm.status,
+          join_date: addForm.join_date,
+          performance_rating: parseFloat(addForm.performance_rating),
+          avatar: addForm.avatar.trim() || undefined,
+        }),
+      });
+      setShowAddModal(false);
+      setAddForm(EMPTY_FORM);
+      onEmployeeAdded?.();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Failed to add employee');
+    } finally {
+      setIsAdding(false);
+    }
+  }, [addForm, onEmployeeAdded]);
+
+  const updateField = useCallback((field: string, value: string) => {
+    setAddForm(prev => ({ ...prev, [field]: value }));
+  }, []);
 
   // Optimize: Memoize filtering to prevent recalculation on every render
   const filteredEmployees = useMemo(() => {
@@ -47,7 +100,11 @@ export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) =>
     <div className="space-y-6 h-full flex flex-col">
       <div className="flex justify-between items-center flex-shrink-0">
         <h1 className="text-2xl font-bold text-slate-800">Employee Management</h1>
-        <button className="bg-indigo-600 text-slate-800 px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
+        <button
+          onClick={() => { setShowAddModal(true); setAddError(null); setAddForm(EMPTY_FORM); }}
+          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" />
           Add Employee
         </button>
       </div>
@@ -145,7 +202,7 @@ export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) =>
                   <button
                     onClick={handleGenerateReview}
                     disabled={isGenerating || !reviewNotes}
-                    className="px-4 py-2 bg-indigo-600 text-slate-800 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     {isGenerating ? 'Generating...' : 'Draft Review with AI'}
                     {!isGenerating && <Sparkles className="w-4 h-4" />}
@@ -176,6 +233,97 @@ export const Employees: React.FC<EmployeesProps> = React.memo(({ employees }) =>
           )}
         </div>
       </div>
+
+      {/* Add Employee Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowAddModal(false)}>
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <h2 className="text-lg font-bold text-slate-800">Add New Employee</h2>
+              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="emp-name" className="block text-sm font-medium text-slate-700 mb-1">Name *</label>
+                  <input id="emp-name" type="text" required value={addForm.name} onChange={e => updateField('name', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label htmlFor="emp-email" className="block text-sm font-medium text-slate-700 mb-1">Email *</label>
+                  <input id="emp-email" type="email" required value={addForm.email} onChange={e => updateField('email', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="emp-role" className="block text-sm font-medium text-slate-700 mb-1">Role *</label>
+                  <input id="emp-role" type="text" required value={addForm.role} onChange={e => updateField('role', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label htmlFor="emp-dept" className="block text-sm font-medium text-slate-700 mb-1">Department *</label>
+                  <input id="emp-dept" type="text" required value={addForm.department} onChange={e => updateField('department', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label htmlFor="emp-status" className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                  <select id="emp-status" value={addForm.status} onChange={e => updateField('status', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                    {Object.values(EmployeeStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="emp-date" className="block text-sm font-medium text-slate-700 mb-1">Join Date</label>
+                  <input id="emp-date" type="date" value={addForm.join_date} onChange={e => updateField('join_date', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label htmlFor="emp-rating" className="block text-sm font-medium text-slate-700 mb-1">Rating (0-5)</label>
+                  <input id="emp-rating" type="number" min="0" max="5" step="0.1" value={addForm.performance_rating}
+                    onChange={e => updateField('performance_rating', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="emp-avatar" className="block text-sm font-medium text-slate-700 mb-1">Avatar URL (optional)</label>
+                <input id="emp-avatar" type="url" value={addForm.avatar} onChange={e => updateField('avatar', e.target.value)}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+              </div>
+
+              {addError && (
+                <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 flex-shrink-0" />
+                  <span className="text-xs font-medium text-rose-600">{addError}</span>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={isAdding}
+                  className="px-5 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors">
+                  {isAdding ? <><Loader2 className="w-4 h-4 animate-spin" />Adding…</> : <><Plus className="w-4 h-4" />Add Employee</>}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

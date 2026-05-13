@@ -1,6 +1,7 @@
 import { runOpenClawResponse } from './client';
 import { OpenClawResponseSchema, type OpenClawResponse } from '../../lib/ai-schemas';
 import { log } from '../../lib/logger';
+import { errMsg } from '../../lib/errMsg';
 
 export type { OpenClawResponse };
 
@@ -118,10 +119,10 @@ export async function runCandidateWorkflowWithOpenClaw(
         const jsonMatch = result.text.match(/\{[\s\S]*\}/);
         const jsonStr = jsonMatch ? jsonMatch[0] : result.text;
         parsed = OpenClawResponseSchema.parse(JSON.parse(jsonStr));
-    } catch (err: any) {
+    } catch (err: unknown) {
         log.warn('openclaw response parse failed, using safe defaults', {
             candidateId: candidate.id,
-            error: err.message,
+            error: errMsg(err),
             raw: result.text?.slice(0, 200),
         });
         parsed = OpenClawResponseSchema.parse({});

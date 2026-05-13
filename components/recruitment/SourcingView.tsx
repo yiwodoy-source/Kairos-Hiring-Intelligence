@@ -118,7 +118,7 @@ const DiscoveryResults = React.memo(({ candidates, onViewProfile, onAddToPipelin
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 {safeCandidates.map((c, idx) => (
-                    <div key={idx} className="border border-slate-300 rounded-lg p-3 hover:border-indigo-300 transition-colors bg-slate-100 shadow-sm">
+                    <div key={`${c.name}-${c.company}-${idx}`} className="border border-slate-300 rounded-lg p-3 hover:border-indigo-300 transition-colors bg-slate-100 shadow-sm">
                         <div className="flex items-start justify-between mb-2">
                             <div className="flex items-center gap-2">
                                 <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 text-xs font-bold">

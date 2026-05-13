@@ -1,4 +1,5 @@
 import { searchWithFirecrawl, getFirecrawlStatus } from '../integrations/firecrawl';
+import { errMsg } from '../../lib/errMsg';
 
 export interface FirecrawlCandidate {
     name: string;
@@ -96,8 +97,8 @@ export async function sourceWithFirecrawlForRoles(
         try {
             const candidates = await sourceWithFirecrawlForRole(title, limit);
             results.push({ role: title, candidates });
-        } catch (err: any) {
-            results.push({ role: title, candidates: [], error: err.message });
+        } catch (err: unknown) {
+            results.push({ role: title, candidates: [], error: errMsg(err) });
         }
         await new Promise(r => setTimeout(r, 600));
     }

@@ -4,6 +4,7 @@ import { getOpenClawStatus, probeOpenClaw } from '../services/openclaw/client';
 import { runCandidateWorkflowWithOpenClaw } from '../services/openclaw/recruitment_orchestrator';
 import { logAgentActivity } from '../services/hr_agent/logger';
 import { log } from '../lib/logger';
+import { errMsg } from '../lib/errMsg';
 
 const router = express.Router();
 
@@ -197,10 +198,10 @@ router.post('/bulk-sweep', async (_req, res) => {
 
             updated++;
             details.push({ id: candidate.id, name: fullName, result: advice.recommended_decision_status || advice.workflow_state });
-        } catch (err: any) {
+        } catch (err: unknown) {
             errors++;
-            details.push({ id: candidate.id, name: fullName, error: err.message });
-            logAgentActivity(`[OpenClaw bulk] Failed for candidate ${candidate.id}: ${err.message}`, 'WARN');
+            details.push({ id: candidate.id, name: fullName, error: errMsg(err) });
+            logAgentActivity(`[OpenClaw bulk] Failed for candidate ${candidate.id}: ${errMsg(err)}`, 'WARN');
         }
     }
 

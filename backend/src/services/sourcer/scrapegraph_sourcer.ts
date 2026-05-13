@@ -1,4 +1,5 @@
 import { searchPublicProfiles, getScrapeGraphStatus } from '../integrations/scrapegraph';
+import { errMsg } from '../../lib/errMsg';
 
 export interface ScrapeGraphCandidate {
     name: string;
@@ -143,8 +144,8 @@ export async function sourceForRoles(
         try {
             const candidates = await sourceForRole(title, limit);
             results.push({ role: title, candidates });
-        } catch (err: any) {
-            results.push({ role: title, candidates: [], error: err.message });
+        } catch (err: unknown) {
+            results.push({ role: title, candidates: [], error: errMsg(err) });
         }
         // Brief pause between API calls
         await new Promise(r => setTimeout(r, 500));

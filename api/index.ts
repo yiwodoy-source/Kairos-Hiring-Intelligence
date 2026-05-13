@@ -10,8 +10,8 @@ let loadError: Error | null = null;
 
 try {
     appModule = require('../backend/src/app');
-} catch (err: any) {
-    loadError = err;
+} catch (err: unknown) {
+    loadError = err instanceof Error ? err : new Error(String(err));
 }
 
 export default function handler(req: IncomingMessage, res: ServerResponse) {

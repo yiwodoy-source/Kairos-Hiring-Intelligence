@@ -686,7 +686,7 @@ export function HrAgentDashboard() {
                             <div className="space-y-2">
                                 {status.logs.length > 0 ? (
                                     status.logs.map((log, index) => (
-                                        <p key={index} className="leading-6 text-slate-600">
+                                        <p key={`${index}-${log.slice(0, 32)}`} className="leading-6 text-slate-600">
                                             <span className="mr-2 text-slate-400">[{index}]</span>
                                             {log}
                                         </p>

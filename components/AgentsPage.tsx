@@ -22,6 +22,14 @@ import {
   Users,
   Minus,
   Plus,
+  MessageSquare,
+  Bot,
+  ToggleLeft,
+  ToggleRight,
+  ChevronRight,
+  ArrowLeft,
+  Inbox,
+  User,
 } from 'lucide-react';
 import { apiFetch } from '../services/apiClient';
 
@@ -217,148 +225,446 @@ interface WAMessage {
   created_at: string;
 }
 
-// WhatsApp panel component
+// ─── WhatsApp types ──────────────────────────────────────────────────────────
+
+interface WAConversation {
+  phone: string;
+  last_body: string;
+  last_direction: string;
+  last_at: string;
+  total: number;
+  unread: number;
+  candidate: { first_name: string; last_name: string; decision_status: string; applied_role: string } | null;
+}
+
+interface WASettings {
+  enabled: boolean;
+  candidateOnly: boolean;
+  mode: 'immediate' | 'draft';
+  customPrompt: string;
+}
+
+// ─── WhatsApp Panel ───────────────────────────────────────────────────────────
+
 const WhatsAppPanel: React.FC = () => {
-  const [messages, setMessages] = useState<WAMessage[]>([]);
+  const [tab, setTab] = useState<'inbox' | 'settings'>('inbox');
+  const [conversations, setConversations] = useState<WAConversation[]>([]);
+  const [activePhone, setActivePhone] = useState<string | null>(null);
+  const [thread, setThread] = useState<WAMessage[]>([]);
   const [waStatus, setWaStatus] = useState<{ available: boolean; reason?: string } | null>(null);
+  const [settings, setSettings] = useState<WASettings>({ enabled: false, candidateOnly: true, mode: 'immediate', customPrompt: '' });
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sendPhone, setSendPhone] = useState('');
   const [sendBody, setSendBody] = useState('');
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<string | null>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+
+  const totalMsgs = conversations.reduce((s, c) => s + c.total, 0);
+  const inboundCount = conversations.reduce((s, c) => s + c.unread, 0);
+  const candidateContacts = conversations.filter(c => c.candidate).length;
 
   const load = useCallback(async () => {
     try {
-      const [msgRes, statusRes] = await Promise.all([
-        apiFetch<{ messages: WAMessage[] }>('/api/hr-agent/whatsapp/messages?limit=20'),
+      const [convRes, statusRes, settingsRes] = await Promise.all([
+        apiFetch<{ conversations: WAConversation[] }>('/api/hr-agent/whatsapp/conversations'),
         apiFetch<{ whatsapp: { available: boolean; reason?: string } }>('/api/hr-agent/whatsapp/status'),
+        apiFetch<{ settings: WASettings }>('/api/hr-agent/whatsapp/settings'),
       ]);
-      setMessages(msgRes.messages ?? []);
+      setConversations(convRes.conversations ?? []);
       setWaStatus(statusRes.whatsapp);
+      setSettings(settingsRes.settings ?? { enabled: false, candidateOnly: true, mode: 'immediate', customPrompt: '' });
     } catch { /* non-critical */ }
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
+  const loadThread = useCallback(async (phone: string) => {
+    try {
+      const r = await apiFetch<{ messages: WAMessage[] }>(`/api/hr-agent/whatsapp/conversation/${encodeURIComponent(phone)}`);
+      setThread((r.messages ?? []).reverse());
+      setTimeout(() => threadRef.current?.scrollTo(0, threadRef.current.scrollHeight), 50);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (activePhone) loadThread(activePhone);
+  }, [activePhone, loadThread]);
+
   const handleSend = async () => {
-    if (!sendPhone || !sendBody) return;
+    const phone = activePhone || sendPhone;
+    if (!phone || !sendBody) return;
     setSending(true);
     setSendResult(null);
     try {
       const r = await apiFetch<{ success: boolean; error?: string }>('/api/hr-agent/whatsapp/send', {
         method: 'POST',
-        body: JSON.stringify({ phone: sendPhone, message: sendBody }),
+        body: JSON.stringify({ phone, message: sendBody }),
       });
       setSendResult(r.success ? '✓ Sent' : `✗ ${r.error}`);
-      if (r.success) { setSendPhone(''); setSendBody(''); load(); }
+      if (r.success) { setSendBody(''); load(); if (activePhone) loadThread(activePhone); }
     } catch (e: unknown) {
       setSendResult(`✗ ${e instanceof Error ? e.message : 'Failed'}`);
     }
     setSending(false);
   };
 
-  const dirColor = (d: string) =>
-    d === 'outbound' ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-blue-600 bg-blue-50 border-blue-200';
+  const handleSaveSettings = async () => {
+    setSettingsSaving(true);
+    try {
+      await apiFetch('/api/hr-agent/whatsapp/settings', {
+        method: 'POST',
+        body: JSON.stringify(settings),
+      });
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    } catch { /* ignore */ }
+    setSettingsSaving(false);
+  };
+
+  const statusDot = (s: string) => {
+    const map: Record<string, string> = {
+      Shortlisted: 'bg-emerald-400',
+      Rejected: 'bg-rose-400',
+      'Review Required': 'bg-amber-400',
+    };
+    return map[s] ?? 'bg-slate-300';
+  };
+
+  const activeConvo = conversations.find(c => c.phone === activePhone);
 
   return (
     <div className="rounded-2xl border border-green-100 bg-white overflow-hidden shadow-sm">
+      {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-green-50/60 to-white border-b border-green-100">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-green-100 flex items-center justify-center">
-            <Send className="w-4 h-4 text-green-600" />
+            <MessageSquare className="w-4 h-4 text-green-600" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-slate-800">WhatsApp Auto-Reply</h3>
-            <p className="text-xs text-slate-400">OpenClaw · Kairos pipeline integration</p>
+            <h3 className="text-sm font-semibold text-slate-800">WhatsApp Intelligence</h3>
+            <p className="text-xs text-slate-400">OpenClaw · Kairos AI auto-reply</p>
           </div>
         </div>
-        <div className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border ${
-          waStatus?.available
-            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-            : 'bg-slate-50 border-slate-200 text-slate-500'
-        }`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${waStatus?.available ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
-          {waStatus === null ? 'Checking…' : waStatus.available ? 'OpenClaw connected' : (waStatus.reason ?? 'Offline')}
+        <div className="flex items-center gap-2">
+          {/* Auto-reply badge */}
+          <button
+            onClick={() => {
+              const next = { ...settings, enabled: !settings.enabled };
+              setSettings(next);
+              apiFetch('/api/hr-agent/whatsapp/settings', { method: 'POST', body: JSON.stringify(next) }).catch(() => {});
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border transition-colors cursor-pointer ${
+              settings.enabled
+                ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
+                : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+            }`}
+            title="Toggle auto-reply"
+          >
+            {settings.enabled
+              ? <ToggleRight className="w-3.5 h-3.5" />
+              : <ToggleLeft className="w-3.5 h-3.5" />}
+            Auto-reply {settings.enabled ? 'ON' : 'OFF'}
+          </button>
+          {/* Connection status */}
+          <div className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border ${
+            waStatus?.available
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+              : 'bg-slate-50 border-slate-200 text-slate-500'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${waStatus?.available ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+            {waStatus === null ? 'Checking…' : waStatus.available ? 'Connected' : 'Offline'}
+          </div>
         </div>
       </div>
 
-      <div className="p-5 space-y-4">
-        {/* Quick send */}
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Quick Send</p>
-          <div className="flex gap-2 flex-wrap">
-            <input
-              type="text"
-              placeholder="+91 9876543210"
-              value={sendPhone}
-              onChange={e => setSendPhone(e.target.value)}
-              className="flex-shrink-0 w-44 rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-green-400"
-            />
-            <input
-              type="text"
-              placeholder="Message text…"
-              value={sendBody}
-              onChange={e => setSendBody(e.target.value)}
-              className="flex-1 min-w-[180px] rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-green-400"
-            />
+      {/* Stats bar */}
+      <div className="grid grid-cols-4 divide-x divide-slate-100 border-b border-slate-100 bg-slate-50/50">
+        {[
+          { label: 'Total Messages', value: totalMsgs },
+          { label: 'Inbound', value: inboundCount },
+          { label: 'Outbound', value: totalMsgs - inboundCount },
+          { label: 'Candidates', value: candidateContacts },
+        ].map(s => (
+          <div key={s.label} className="px-4 py-3 text-center">
+            <div className="text-lg font-bold text-slate-800">{s.value}</div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-slate-100">
+        {(['inbox', 'settings'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => { setTab(t); setActivePhone(null); }}
+            className={`flex items-center gap-1.5 px-5 py-2.5 text-xs font-semibold transition-colors capitalize ${
+              tab === t
+                ? 'text-green-700 border-b-2 border-green-500 bg-green-50/40'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {t === 'inbox' ? <Inbox className="w-3.5 h-3.5" /> : <Settings2 className="w-3.5 h-3.5" />}
+            {t === 'inbox' ? 'Inbox' : 'AI Settings'}
+          </button>
+        ))}
+      </div>
+
+      {/* Body */}
+      {tab === 'inbox' && (
+        <div className="flex" style={{ height: 420 }}>
+          {/* Conversation list */}
+          <div className={`flex-shrink-0 border-r border-slate-100 overflow-y-auto ${activePhone ? 'hidden sm:flex sm:flex-col w-56' : 'flex flex-col w-full sm:w-56'}`}>
+            {loading ? (
+              <div className="flex items-center justify-center h-full text-xs text-slate-400">Loading…</div>
+            ) : conversations.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full gap-2 px-4 text-center">
+                <MessageSquare className="w-8 h-8 text-slate-200" />
+                <p className="text-xs text-slate-400">No conversations yet</p>
+                <p className="text-[11px] text-slate-300">Incoming WhatsApp messages appear here</p>
+              </div>
+            ) : (
+              conversations.map(c => (
+                <button
+                  key={c.phone}
+                  onClick={() => setActivePhone(c.phone)}
+                  className={`w-full text-left px-4 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors ${activePhone === c.phone ? 'bg-green-50/60' : ''}`}
+                >
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                      <User className="w-3 h-3 text-slate-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-semibold text-slate-700 truncate">
+                          {c.candidate ? `${c.candidate.first_name} ${c.candidate.last_name}` : c.phone}
+                        </span>
+                        {c.candidate && (
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot(c.candidate.decision_status)}`} />
+                        )}
+                      </div>
+                      {c.candidate && (
+                        <div className="text-[10px] text-slate-400 truncate">{c.candidate.decision_status} · {c.candidate.applied_role}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-400 truncate ml-8">{c.last_body}</div>
+                  <div className="text-[10px] text-slate-300 ml-8 mt-0.5">{relativeTime(c.last_at)}</div>
+                </button>
+              ))
+            )}
+          </div>
+
+          {/* Thread / Quick-send */}
+          <div className={`flex-1 flex flex-col min-w-0 ${activePhone ? 'flex' : 'hidden sm:flex'}`}>
+            {activePhone ? (
+              <>
+                {/* Thread header */}
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 bg-slate-50/50 flex-shrink-0">
+                  <button onClick={() => setActivePhone(null)} className="sm:hidden p-1 rounded hover:bg-slate-200">
+                    <ArrowLeft className="w-3.5 h-3.5 text-slate-500" />
+                  </button>
+                  <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center">
+                    <User className="w-3 h-3 text-slate-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-slate-700">
+                      {activeConvo?.candidate
+                        ? `${activeConvo.candidate.first_name} ${activeConvo.candidate.last_name}`
+                        : activePhone}
+                    </div>
+                    {activeConvo?.candidate && (
+                      <div className="text-[10px] text-slate-400">{activeConvo.candidate.applied_role}</div>
+                    )}
+                  </div>
+                  {activeConvo?.candidate && (
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                      activeConvo.candidate.decision_status === 'Shortlisted' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                      activeConvo.candidate.decision_status === 'Rejected' ? 'bg-rose-50 border-rose-200 text-rose-700' :
+                      'bg-amber-50 border-amber-200 text-amber-700'
+                    }`}>
+                      {activeConvo.candidate.decision_status}
+                    </span>
+                  )}
+                </div>
+
+                {/* Messages */}
+                <div ref={threadRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2 bg-slate-50/20">
+                  {thread.length === 0 ? (
+                    <div className="text-xs text-slate-300 text-center py-8">No messages loaded</div>
+                  ) : (
+                    thread.map(m => (
+                      <div key={m.id} className={`flex ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-xs ${
+                          m.direction === 'outbound'
+                            ? 'bg-green-600 text-white rounded-br-sm'
+                            : 'bg-white border border-slate-200 text-slate-700 rounded-bl-sm'
+                        }`}>
+                          <p className="leading-relaxed">{m.body}</p>
+                          <p className={`text-[10px] mt-1 ${m.direction === 'outbound' ? 'text-green-200' : 'text-slate-300'}`}>
+                            {relativeTime(m.created_at)} · {m.status}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Reply box */}
+                <div className="flex gap-2 px-4 py-3 border-t border-slate-100 flex-shrink-0">
+                  <input
+                    type="text"
+                    placeholder="Type a reply…"
+                    value={sendBody}
+                    onChange={e => setSendBody(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                    className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-green-400"
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={sending || !sendBody}
+                    className="flex items-center gap-1 rounded-xl bg-green-600 hover:bg-green-700 disabled:opacity-40 px-3 py-2 text-xs font-semibold text-white transition-colors"
+                  >
+                    {sending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* Quick send when no thread selected */
+              <div className="flex-1 flex flex-col justify-center items-center px-6 gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center">
+                  <MessageSquare className="w-5 h-5 text-green-400" />
+                </div>
+                <p className="text-xs text-slate-400 text-center">Select a conversation or send a new message</p>
+                <div className="w-full space-y-2">
+                  <input
+                    type="text"
+                    placeholder="+91 9876543210"
+                    value={sendPhone}
+                    onChange={e => setSendPhone(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-green-400"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Message…"
+                      value={sendBody}
+                      onChange={e => setSendBody(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSend()}
+                      className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-green-400"
+                    />
+                    <button
+                      onClick={handleSend}
+                      disabled={sending || !sendPhone || !sendBody}
+                      className="flex items-center gap-1 rounded-xl bg-green-600 hover:bg-green-700 disabled:opacity-40 px-3 py-2 text-xs font-semibold text-white"
+                    >
+                      {sending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                      Send
+                    </button>
+                  </div>
+                  {sendResult && (
+                    <p className={`text-xs font-medium ${sendResult.startsWith('✓') ? 'text-emerald-600' : 'text-rose-600'}`}>{sendResult}</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'settings' && (
+        <div className="p-5 space-y-5">
+          {/* Auto-reply toggle */}
+          <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50/50">
+            <div>
+              <div className="text-sm font-semibold text-slate-700">Auto-Reply</div>
+              <div className="text-xs text-slate-400 mt-0.5">Automatically reply to incoming WhatsApp messages using AI</div>
+            </div>
             <button
-              onClick={handleSend}
-              disabled={sending || !sendPhone || !sendBody}
-              className="flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 px-3 py-2 text-xs font-semibold text-white transition-colors"
+              onClick={() => setSettings(s => ({ ...s, enabled: !s.enabled }))}
+              className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold border transition-colors ${
+                settings.enabled
+                  ? 'bg-green-600 border-green-600 text-white'
+                  : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
+              }`}
             >
-              {sending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-              {sending ? 'Sending…' : 'Send'}
+              {settings.enabled ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+              {settings.enabled ? 'Enabled' : 'Disabled'}
             </button>
           </div>
-          {sendResult && (
-            <p className={`mt-1.5 text-xs font-medium ${sendResult.startsWith('✓') ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {sendResult}
-            </p>
-          )}
-        </div>
 
-        {/* Message log */}
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-            Recent Messages
-          </p>
-          {loading ? (
-            <div className="text-xs text-slate-400 py-4 text-center">Loading…</div>
-          ) : messages.length === 0 ? (
-            <div className="text-xs text-slate-400 py-6 text-center">
-              No WhatsApp messages yet. Messages auto-send when candidates have phone numbers.
+          {/* Candidate only */}
+          <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200">
+            <div>
+              <div className="text-sm font-semibold text-slate-700">Candidates Only</div>
+              <div className="text-xs text-slate-400 mt-0.5">Only reply to phone numbers registered in the candidate database</div>
             </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {['Phone', 'Direction', 'Message', 'Status', 'Time'].map(h => (
-                      <th key={h} className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {messages.map(m => (
-                    <tr key={m.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="px-3 py-2 font-mono text-slate-600 whitespace-nowrap">{m.phone}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${dirColor(m.direction)}`}>
-                          {m.direction}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-slate-600 max-w-xs truncate">{m.body}</td>
-                      <td className="px-3 py-2 text-slate-400">{m.status}</td>
-                      <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{relativeTime(m.created_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <button
+              onClick={() => setSettings(s => ({ ...s, candidateOnly: !s.candidateOnly }))}
+              className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold border transition-colors ${
+                settings.candidateOnly
+                  ? 'bg-blue-600 border-blue-600 text-white'
+                  : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
+              }`}
+            >
+              {settings.candidateOnly ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+              {settings.candidateOnly ? 'Candidates Only' : 'Everyone'}
+            </button>
+          </div>
+
+          {/* Mode */}
+          <div className="p-4 rounded-xl border border-slate-200">
+            <div className="text-sm font-semibold text-slate-700 mb-3">Reply Mode</div>
+            <div className="grid grid-cols-2 gap-2">
+              {(['immediate', 'draft'] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setSettings(s => ({ ...s, mode: m }))}
+                  className={`flex items-center gap-2 p-3 rounded-xl border text-xs font-semibold text-left transition-colors ${
+                    settings.mode === m
+                      ? 'border-green-400 bg-green-50 text-green-700'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {m === 'immediate' ? <Send className="w-3.5 h-3.5 flex-shrink-0" /> : <Bot className="w-3.5 h-3.5 flex-shrink-0" />}
+                  <div>
+                    <div className="capitalize">{m}</div>
+                    <div className="text-[10px] font-normal text-slate-400 mt-0.5">
+                      {m === 'immediate' ? 'Sends reply instantly' : 'Saves draft for review'}
+                    </div>
+                  </div>
+                </button>
+              ))}
             </div>
-          )}
+          </div>
+
+          {/* Custom prompt */}
+          <div className="p-4 rounded-xl border border-slate-200">
+            <div className="text-sm font-semibold text-slate-700 mb-1">AI Instructions</div>
+            <p className="text-xs text-slate-400 mb-2">Custom instructions for the AI when generating replies (optional)</p>
+            <textarea
+              rows={3}
+              value={settings.customPrompt}
+              onChange={e => setSettings(s => ({ ...s, customPrompt: e.target.value }))}
+              placeholder="E.g. Always reply in Hindi. Mention the company name Kairos. Keep replies under 50 words."
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-green-400 resize-none"
+            />
+          </div>
+
+          <button
+            onClick={handleSaveSettings}
+            disabled={settingsSaving}
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-green-600 hover:bg-green-700 disabled:opacity-50 px-4 py-2.5 text-sm font-semibold text-white transition-colors"
+          >
+            {settingsSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            {settingsSaved ? 'Saved!' : settingsSaving ? 'Saving…' : 'Save Settings'}
+          </button>
         </div>
-      </div>
+      )}
     </div>
   );
 };

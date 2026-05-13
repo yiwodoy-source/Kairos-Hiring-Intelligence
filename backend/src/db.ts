@@ -253,6 +253,17 @@ async function createTablesSQLite(sqliteDb: any) {
         );
     `);
 
+    await sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS wa_auto_reply_settings (
+            id              INTEGER PRIMARY KEY DEFAULT 1,
+            enabled         INTEGER NOT NULL DEFAULT 0,
+            candidate_only  INTEGER NOT NULL DEFAULT 1,
+            mode            TEXT NOT NULL DEFAULT 'immediate',
+            custom_prompt   TEXT NOT NULL DEFAULT '',
+            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+
     await migrateSchema(sqliteDb);
 
     await sqliteDb.exec(`
@@ -451,6 +462,17 @@ async function createTablesPostgres(db: DbAdapter) {
     `);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_wa_phone ON whatsapp_messages(phone, created_at DESC)`);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_wa_candidate ON whatsapp_messages(candidate_email)`);
+
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS wa_auto_reply_settings (
+            id              INTEGER PRIMARY KEY DEFAULT 1,
+            enabled         INTEGER NOT NULL DEFAULT 0,
+            candidate_only  INTEGER NOT NULL DEFAULT 1,
+            mode            TEXT NOT NULL DEFAULT 'immediate',
+            custom_prompt   TEXT NOT NULL DEFAULT '',
+            updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
 }
 
 // ── PostgreSQL column migration ───────────────────────────────────────────────
