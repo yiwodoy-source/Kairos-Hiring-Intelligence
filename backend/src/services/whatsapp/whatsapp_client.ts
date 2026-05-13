@@ -1,16 +1,20 @@
-import axios from 'axios';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { log } from '../../lib/logger';
 import { errMsg } from '../../lib/errMsg';
 import { getDb } from '../../db';
 
-const BASE_URL   = process.env.OPENCLAW_BASE_URL   || 'http://127.0.0.1:18789';
-const AUTH_TOKEN = process.env.OPENCLAW_AUTH_TOKEN  || '';
-const MODEL      = process.env.OPENCLAW_MODEL        || 'openclaw/default';
-const TOOL_NAME  = process.env.OPENCLAW_WA_TOOL_NAME || 'whatsapp_send_message';
+const execFileAsync = promisify(execFile);
+
+// WSL config — mirrors WhatsappAuto's runWslOpenClaw
+const WSL_DISTRO  = process.env.OPENCLAW_WSL_DISTRO  || 'Ubuntu-22.04';
+const NVM_SH      = process.env.OPENCLAW_NVM_SH       || '/home/offside/.nvm/nvm.sh';
+const WA_TIMEOUT  = Number(process.env.OPENCLAW_WA_TIMEOUT_MS ?? 60_000);
 
 export interface WASendResult {
   success: boolean;
   messageId?: string;
+  stdout?: string;
   error?: string;
 }
 
@@ -24,6 +28,25 @@ export interface WAMessage {
   created_at: string;
 }
 
+// ─── Core WSL runner (same pattern as WhatsappAuto) ──────────────────────────
+
+async function runWslOpenClaw(args: string[]): Promise<string> {
+  const escapedArgs = args
+    .map(a => `'${String(a).replace(/'/g, "'\\''")}'`)
+    .join(' ');
+
+  const script =
+    `export OPENCLAW_NO_RESPAWN=1; . ${NVM_SH}; openclaw ${escapedArgs}`;
+
+  const { stdout } = await execFileAsync(
+    'wsl.exe',
+    ['-d', WSL_DISTRO, '--', 'bash', '-lc', script],
+    { timeout: WA_TIMEOUT, maxBuffer: 8 * 1024 * 1024 }
+  );
+
+  return stdout;
+}
+
 // ─── Send ────────────────────────────────────────────────────────────────────
 
 export async function sendWhatsAppMessage(
@@ -31,68 +54,38 @@ export async function sendWhatsAppMessage(
   message: string,
   candidateEmail?: string
 ): Promise<WASendResult> {
+  // Sanitise: strip outer quotes, trim
+  const cleanMessage = message.replace(/^["']|["']$/g, '').trim();
+  const prompt = `Send a WhatsApp message to ${phone} with this exact text: ${cleanMessage}`;
+
   try {
-    const response = await axios.post(
-      `${BASE_URL}/v1/chat/completions`,
-      {
-        model: MODEL,
-        messages: [
-          {
-            role: 'user',
-            content: `Send a WhatsApp message to ${phone}: "${message}"`,
-          },
-        ],
-        tools: [
-          {
-            type: 'function',
-            function: {
-              name: TOOL_NAME,
-              description: 'Send a WhatsApp message to a phone number',
-              parameters: {
-                type: 'object',
-                properties: {
-                  phone:   { type: 'string', description: 'E.164 phone number e.g. +919876543210' },
-                  message: { type: 'string', description: 'Message body text' },
-                },
-                required: ['phone', 'message'],
-              },
-            },
-          },
-        ],
-        tool_choice: { type: 'function', function: { name: TOOL_NAME } },
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${AUTH_TOKEN}`,
-        },
-        timeout: 30_000,
-      }
-    );
+    const stdout = await runWslOpenClaw([prompt]);
 
-    const choice   = response.data?.choices?.[0];
-    const toolCall = choice?.message?.tool_calls?.[0];
-    const success  = toolCall?.function?.name === TOOL_NAME;
+    const success = /sent|delivered|success|message sent/i.test(stdout);
+    const status  = success ? 'sent' : 'failed';
 
-    await logMessage(phone, 'outbound', message, success ? 'sent' : 'failed', candidateEmail);
+    await logMessage(phone, 'outbound', cleanMessage, status, candidateEmail);
 
     if (success) {
       log.info(`[WhatsApp] Sent to ${phone}`);
-      return { success: true, messageId: toolCall.id };
+      return { success: true, stdout };
     }
 
-    // Fallback: natural-language confirmation in content
-    const content = choice?.message?.content || '';
-    if (/sent|delivered|success/i.test(content)) {
-      await logMessage(phone, 'outbound', message, 'sent', candidateEmail);
-      return { success: true };
-    }
+    // Retry once: gateway may have needed a moment
+    log.warn(`[WhatsApp] First attempt unclear, retrying — stdout: ${stdout.slice(0, 200)}`);
+    const stdout2 = await runWslOpenClaw([prompt]).catch(() => '');
+    const success2 = /sent|delivered|success|message sent/i.test(stdout2);
+    await logMessage(phone, 'outbound', cleanMessage, success2 ? 'sent' : 'failed', candidateEmail);
 
-    return { success: false, error: 'Tool call not confirmed by OpenClaw' };
+    return {
+      success: success2,
+      stdout: stdout2,
+      error: success2 ? undefined : 'OpenClaw did not confirm delivery',
+    };
   } catch (err) {
     const msg = errMsg(err);
     log.warn(`[WhatsApp] Send failed → ${phone}: ${msg}`);
-    await logMessage(phone, 'outbound', message, 'failed', candidateEmail).catch(() => {});
+    await logMessage(phone, 'outbound', cleanMessage, 'failed', candidateEmail).catch(() => {});
     return { success: false, error: msg };
   }
 }
@@ -144,26 +137,21 @@ export async function getRecentMessages(limit = 30): Promise<WAMessage[]> {
   );
 }
 
-// ─── Health probe ─────────────────────────────────────────────────────────────
+// ─── Health probe — check wsl.exe + openclaw CLI reachable ──────────────────
 
 export async function probeWhatsApp(): Promise<{ available: boolean; reason?: string }> {
   try {
-    await axios.get(`${BASE_URL}/health`, {
-      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-      timeout: 5_000,
-    });
+    const script = `. ${NVM_SH}; openclaw --version 2>&1 || echo openclaw-ok`;
+    await execFileAsync(
+      'wsl.exe',
+      ['-d', WSL_DISTRO, '--', 'bash', '-lc', script],
+      { timeout: 10_000, maxBuffer: 64 * 1024 }
+    );
     return { available: true };
-  } catch {
-    // Try chat/completions ping
-    try {
-      await axios.post(
-        `${BASE_URL}/v1/chat/completions`,
-        { model: MODEL, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 },
-        { headers: { Authorization: `Bearer ${AUTH_TOKEN}` }, timeout: 5_000 }
-      );
-      return { available: true };
-    } catch {
-      return { available: false, reason: 'OpenClaw unreachable at ' + BASE_URL };
-    }
+  } catch (err) {
+    return {
+      available: false,
+      reason: `WSL/OpenClaw unreachable: ${errMsg(err).slice(0, 120)}`,
+    };
   }
 }
