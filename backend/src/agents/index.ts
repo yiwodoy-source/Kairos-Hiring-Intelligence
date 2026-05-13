@@ -9,6 +9,7 @@ import { MatcherAgent } from './MatcherAgent';
 import { OutreachAgent } from './OutreachAgent';
 import { SchedulerAgent } from './SchedulerAgent';
 import { SourcerAgent } from './SourcerAgent';
+import { WhatsAppAgent } from './WhatsAppAgent';
 import { log } from '../lib/logger';
 
 let orchestrator: OrchestratorAgent | null = null;
@@ -29,6 +30,7 @@ export async function startKairosSwarm(): Promise<OrchestratorAgent> {
   const outreach = new OutreachAgent(registry, bus);
   const scheduler = new SchedulerAgent(registry, bus);
   const sourcer = new SourcerAgent(registry, bus, queue);
+  const whatsapp = new WhatsAppAgent(registry, bus);
 
   orchestrator = new OrchestratorAgent(registry, bus, queue);
   orchestrator.registerAgent(intake);
@@ -37,6 +39,7 @@ export async function startKairosSwarm(): Promise<OrchestratorAgent> {
   orchestrator.registerAgent(outreach);
   orchestrator.registerAgent(scheduler);
   orchestrator.registerAgent(sourcer);
+  orchestrator.registerAgent(whatsapp);
 
   // Start specialized agents first (they register in DB, start heartbeats)
   await Promise.all([
@@ -46,12 +49,13 @@ export async function startKairosSwarm(): Promise<OrchestratorAgent> {
     outreach.start(),
     scheduler.start(),
     sourcer.start(),
+    whatsapp.start(),
   ]);
 
   // Orchestrator starts last — begins dispatching once agents are registered
   await orchestrator.start();
 
-  log.info('[Kairos] Swarm online', { agents: 7 });
+  log.info('[Kairos] Swarm online', { agents: 8 });
   return orchestrator;
 }
 

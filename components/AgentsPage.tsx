@@ -206,6 +206,163 @@ const AGENT_DEFS = [
 // Kairos config maps
 // ---------------------------------------------------------------------------
 
+// WhatsApp message type
+interface WAMessage {
+  id: number;
+  phone: string;
+  direction: 'inbound' | 'outbound';
+  body: string;
+  status: string;
+  candidate_email: string | null;
+  created_at: string;
+}
+
+// WhatsApp panel component
+const WhatsAppPanel: React.FC = () => {
+  const [messages, setMessages] = useState<WAMessage[]>([]);
+  const [waStatus, setWaStatus] = useState<{ available: boolean; reason?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sendPhone, setSendPhone] = useState('');
+  const [sendBody, setSendBody] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [msgRes, statusRes] = await Promise.all([
+        apiFetch<{ messages: WAMessage[] }>('/api/hr-agent/whatsapp/messages?limit=20'),
+        apiFetch<{ whatsapp: { available: boolean; reason?: string } }>('/api/hr-agent/whatsapp/status'),
+      ]);
+      setMessages(msgRes.messages ?? []);
+      setWaStatus(statusRes.whatsapp);
+    } catch { /* non-critical */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSend = async () => {
+    if (!sendPhone || !sendBody) return;
+    setSending(true);
+    setSendResult(null);
+    try {
+      const r = await apiFetch<{ success: boolean; error?: string }>('/api/hr-agent/whatsapp/send', {
+        method: 'POST',
+        body: JSON.stringify({ phone: sendPhone, message: sendBody }),
+      });
+      setSendResult(r.success ? '✓ Sent' : `✗ ${r.error}`);
+      if (r.success) { setSendPhone(''); setSendBody(''); load(); }
+    } catch (e: unknown) {
+      setSendResult(`✗ ${e instanceof Error ? e.message : 'Failed'}`);
+    }
+    setSending(false);
+  };
+
+  const dirColor = (d: string) =>
+    d === 'outbound' ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-blue-600 bg-blue-50 border-blue-200';
+
+  return (
+    <div className="rounded-2xl border border-green-100 bg-white overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-green-50/60 to-white border-b border-green-100">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-green-100 flex items-center justify-center">
+            <Send className="w-4 h-4 text-green-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">WhatsApp Auto-Reply</h3>
+            <p className="text-xs text-slate-400">OpenClaw · Kairos pipeline integration</p>
+          </div>
+        </div>
+        <div className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border ${
+          waStatus?.available
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            : 'bg-slate-50 border-slate-200 text-slate-500'
+        }`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${waStatus?.available ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+          {waStatus === null ? 'Checking…' : waStatus.available ? 'OpenClaw connected' : (waStatus.reason ?? 'Offline')}
+        </div>
+      </div>
+
+      <div className="p-5 space-y-4">
+        {/* Quick send */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Quick Send</p>
+          <div className="flex gap-2 flex-wrap">
+            <input
+              type="text"
+              placeholder="+91 9876543210"
+              value={sendPhone}
+              onChange={e => setSendPhone(e.target.value)}
+              className="flex-shrink-0 w-44 rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-green-400"
+            />
+            <input
+              type="text"
+              placeholder="Message text…"
+              value={sendBody}
+              onChange={e => setSendBody(e.target.value)}
+              className="flex-1 min-w-[180px] rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-green-400"
+            />
+            <button
+              onClick={handleSend}
+              disabled={sending || !sendPhone || !sendBody}
+              className="flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 px-3 py-2 text-xs font-semibold text-white transition-colors"
+            >
+              {sending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+              {sending ? 'Sending…' : 'Send'}
+            </button>
+          </div>
+          {sendResult && (
+            <p className={`mt-1.5 text-xs font-medium ${sendResult.startsWith('✓') ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {sendResult}
+            </p>
+          )}
+        </div>
+
+        {/* Message log */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+            Recent Messages
+          </p>
+          {loading ? (
+            <div className="text-xs text-slate-400 py-4 text-center">Loading…</div>
+          ) : messages.length === 0 ? (
+            <div className="text-xs text-slate-400 py-6 text-center">
+              No WhatsApp messages yet. Messages auto-send when candidates have phone numbers.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    {['Phone', 'Direction', 'Message', 'Status', 'Time'].map(h => (
+                      <th key={h} className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {messages.map(m => (
+                    <tr key={m.id} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-3 py-2 font-mono text-slate-600 whitespace-nowrap">{m.phone}</td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${dirColor(m.direction)}`}>
+                          {m.direction}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600 max-w-xs truncate">{m.body}</td>
+                      <td className="px-3 py-2 text-slate-400">{m.status}</td>
+                      <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{relativeTime(m.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const KAIROS_TYPE_CONFIG: Record<string, { color: string; borderColor: string; label: string }> = {
   orchestrator: { color: 'text-indigo-500',  borderColor: '#6366F1', label: 'Orchestrator' },
   intake:       { color: 'text-amber-500',   borderColor: '#E8962A', label: 'Intake' },
@@ -1464,6 +1621,9 @@ export const AgentsPage: React.FC = () => {
         tasks={kairosTasks}
         swarm={kairosSwarm}
       />
+
+      {/* ── WhatsApp auto-reply ── */}
+      <WhatsAppPanel />
 
       {/* ── Sync health ── */}
       <SyncHealthBanner syncHealth={agentStatus.syncHealth} />

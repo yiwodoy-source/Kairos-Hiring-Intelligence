@@ -5,7 +5,8 @@ export type AgentType =
   | 'matcher'
   | 'outreach'
   | 'scheduler'
-  | 'sourcer';
+  | 'sourcer'
+  | 'whatsapp';
 
 export type TaskType =
   | 'ingest_emails'
@@ -18,7 +19,9 @@ export type TaskType =
   | 'send_reply'
   | 'mark_email_processed'
   | 'schedule_interview'
-  | 'source_candidates';
+  | 'source_candidates'
+  | 'send_whatsapp'
+  | 'receive_whatsapp';
 
 export type TaskStatus = 'pending' | 'assigned' | 'running' | 'done' | 'failed' | 'cancelled';
 

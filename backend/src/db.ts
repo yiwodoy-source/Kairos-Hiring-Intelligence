@@ -241,9 +241,23 @@ async function createTablesSQLite(sqliteDb: any) {
         );
     `);
 
+    await sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS whatsapp_messages (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone       TEXT NOT NULL,
+            direction   TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+            body        TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            candidate_email TEXT,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+
     await migrateSchema(sqliteDb);
 
     await sqliteDb.exec(`
+        CREATE INDEX IF NOT EXISTS idx_wa_phone ON whatsapp_messages(phone, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_wa_candidate ON whatsapp_messages(candidate_email);
         CREATE INDEX IF NOT EXISTS idx_candidates_created ON candidates(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_candidates_status_score ON candidates(decision_status, overall_score DESC);
         CREATE INDEX IF NOT EXISTS idx_candidates_email ON candidates(email);
@@ -422,6 +436,21 @@ async function createTablesPostgres(db: DbAdapter) {
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status, priority ASC, created_at ASC)`);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_type ON agent_tasks(task_type, status)`);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_registry_type ON agent_registry(agent_type, status)`);
+
+    // WhatsApp message log
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS whatsapp_messages (
+            id          BIGSERIAL PRIMARY KEY,
+            phone       TEXT NOT NULL,
+            direction   TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+            body        TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            candidate_email TEXT,
+            created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_wa_phone ON whatsapp_messages(phone, created_at DESC)`);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_wa_candidate ON whatsapp_messages(candidate_email)`);
 }
 
 // ── PostgreSQL column migration ───────────────────────────────────────────────

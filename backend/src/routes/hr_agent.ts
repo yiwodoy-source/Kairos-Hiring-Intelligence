@@ -5,6 +5,7 @@ import { getDb } from '../db';
 import { runAgentCycle, startAgent, stopAgent, getAgentStatus } from '../services/hr_agent/scheduler';
 import { getLogs } from '../services/hr_agent/logger';
 import { getKairosStatus, getKairosRegistry, getKairosQueue } from '../agents/index';
+import { sendWhatsAppMessage, getRecentMessages, getConversation, probeWhatsApp, recordInbound } from '../services/whatsapp/whatsapp_client';
 import { getOAuth2Client, setGoogleCredentials, encryptToken, loadTokenFromDb, hasCredentials } from '../services/hr_agent/google_client';
 import { exportCandidateRecord } from '../services/hr_agent/candidate_export';
 import { getInterviewAvailability, scheduleCandidateInterview } from '../services/hr_agent/interview_scheduler';
@@ -2366,5 +2367,90 @@ router.post(
         }
     }
 );
+
+// ── WhatsApp ──────────────────────────────────────────────────────────────────
+
+// Health / probe
+router.get('/whatsapp/status', async (_req, res) => {
+    try {
+        const probe = await probeWhatsApp();
+        res.json({ whatsapp: probe });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Recent message log
+router.get('/whatsapp/messages', async (req, res) => {
+    try {
+        const limit = Math.min(Number((req as any).query?.limit ?? 50), 200);
+        const messages = await getRecentMessages(limit);
+        res.json({ messages });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Conversation by phone number
+router.get('/whatsapp/conversation/:phone', async (req, res) => {
+    try {
+        const phone = decodeURIComponent(req.params.phone);
+        const messages = await getConversation(phone, 100);
+        res.json({ phone, messages });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Manual send (from UI or API)
+router.post('/whatsapp/send', async (req, res) => {
+    try {
+        const { phone, message, candidateEmail } = req.body as {
+            phone: string;
+            message: string;
+            candidateEmail?: string;
+        };
+        if (!phone || !message) {
+            return res.status(400).json({ error: 'phone and message required' });
+        }
+        const result = await sendWhatsAppMessage(phone, message, candidateEmail);
+        res.json(result);
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Inbound webhook — OpenClaw posts here when a WhatsApp message arrives
+router.post('/whatsapp/inbound', async (req, res) => {
+    try {
+        const { phone, body, candidateEmail } = req.body as {
+            phone: string;
+            body: string;
+            candidateEmail?: string;
+        };
+        if (!phone || !body) {
+            return res.status(400).json({ error: 'phone and body required' });
+        }
+        await recordInbound(phone, body, candidateEmail);
+
+        // Queue receive_whatsapp task for the WhatsAppAgent to process
+        const queue = getKairosQueue();
+        if (queue) {
+            const { randomUUID } = await import('crypto');
+            await queue.enqueue({
+                taskId: randomUUID(),
+                taskType: 'receive_whatsapp',
+                status: 'pending',
+                priority: 3,
+                maxRetries: 2,
+                payload: { phone, body, candidateEmail },
+            });
+        }
+
+        res.json({ received: true });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
 
 export default router;

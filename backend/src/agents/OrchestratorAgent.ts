@@ -154,24 +154,47 @@ export class OrchestratorAgent extends AgentBase {
         break;
       }
       case 'match_jobs': {
-        // Persist and outreach fire in parallel
-        await Promise.all([
+        const candidateName = result.analysis?.candidate?.first_name || 'Candidate';
+        const role =
+          result.assessment?.matchedJobTitle ||
+          result.assessment?.inferredTargetRole ||
+          'Position';
+        const phone = result.analysis?.candidate?.phone as string | undefined;
+
+        const followOns: Promise<void>[] = [
           this.enqueue('persist_candidate', result, 2, completedTask.taskId),
           this.enqueue(
             'send_reply',
             {
               email: result.email,
-              candidateName: result.analysis?.candidate?.first_name || 'Candidate',
+              candidateName,
               status: result.assessment?.status,
-              role:
-                result.assessment?.matchedJobTitle ||
-                result.assessment?.inferredTargetRole ||
-                'Position',
+              role,
             },
             4,
             completedTask.taskId
           ),
-        ]);
+        ];
+
+        // Auto WhatsApp if phone extracted from CV
+        if (phone) {
+          followOns.push(
+            this.enqueue(
+              'send_whatsapp',
+              {
+                phone,
+                email: result.email,
+                candidateName,
+                status: result.assessment?.status,
+                role,
+              },
+              4,
+              completedTask.taskId
+            )
+          );
+        }
+
+        await Promise.all(followOns);
         break;
       }
       case 'persist_candidate': {
