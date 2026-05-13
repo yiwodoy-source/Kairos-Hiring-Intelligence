@@ -197,6 +197,48 @@ async function createTablesSQLite(sqliteDb: any) {
             value TEXT NOT NULL,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS agent_registry (
+            agent_id TEXT PRIMARY KEY,
+            agent_type TEXT NOT NULL,
+            capabilities TEXT NOT NULL DEFAULT '[]',
+            public_key TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '1.0.0',
+            status TEXT NOT NULL DEFAULT 'active',
+            current_load INTEGER DEFAULT 0,
+            last_heartbeat DATETIME DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_tasks (
+            task_id TEXT PRIMARY KEY,
+            task_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            priority INTEGER DEFAULT 5,
+            payload TEXT NOT NULL DEFAULT '{}',
+            assigned_to TEXT,
+            parent_task_id TEXT,
+            result TEXT,
+            error TEXT,
+            retries INTEGER DEFAULT 0,
+            max_retries INTEGER DEFAULT 3,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            assigned_at DATETIME,
+            started_at DATETIME,
+            completed_at DATETIME
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT,
+            agent_id TEXT NOT NULL,
+            agent_type TEXT NOT NULL,
+            candidate_email TEXT,
+            decision_type TEXT NOT NULL,
+            reasoning TEXT,
+            confidence TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
     `);
 
     await migrateSchema(sqliteDb);
@@ -328,6 +370,58 @@ async function createTablesPostgres(db: DbAdapter) {
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_employees_dept ON employees(department)`);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)`);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_candidate_events_candidate ON candidate_events(candidate_id, created_at DESC)`);
+
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_registry (
+            agent_id TEXT PRIMARY KEY,
+            agent_type TEXT NOT NULL,
+            capabilities TEXT NOT NULL DEFAULT '[]',
+            public_key TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '1.0.0',
+            status TEXT NOT NULL DEFAULT 'active',
+            current_load INTEGER DEFAULT 0,
+            last_heartbeat TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            started_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_tasks (
+            task_id TEXT PRIMARY KEY,
+            task_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            priority INTEGER DEFAULT 5,
+            payload TEXT NOT NULL DEFAULT '{}',
+            assigned_to TEXT,
+            parent_task_id TEXT,
+            result TEXT,
+            error TEXT,
+            retries INTEGER DEFAULT 0,
+            max_retries INTEGER DEFAULT 3,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            assigned_at TIMESTAMPTZ,
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ
+        )
+    `);
+
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_decisions (
+            id BIGSERIAL PRIMARY KEY,
+            task_id TEXT,
+            agent_id TEXT NOT NULL,
+            agent_type TEXT NOT NULL,
+            candidate_email TEXT,
+            decision_type TEXT NOT NULL,
+            reasoning TEXT,
+            confidence TEXT,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status, priority ASC, created_at ASC)`);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_type ON agent_tasks(task_type, status)`);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_registry_type ON agent_registry(agent_type, status)`);
 }
 
 // ── PostgreSQL column migration ───────────────────────────────────────────────

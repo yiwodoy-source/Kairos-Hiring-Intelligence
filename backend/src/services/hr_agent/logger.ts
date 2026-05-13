@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { log as structuredLog } from '../../lib/logger';
+import { errMsg } from '../../lib/errMsg';
 
 const LOG_DIR = path.resolve(process.cwd(), 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'hr_agent.log');
@@ -51,8 +52,8 @@ export function logAgentActivity(message: string, level: 'INFO' | 'ERROR' | 'WAR
     try {
         rotateLogs();
         fs.appendFileSync(LOG_FILE, logEntry);
-    } catch (err: any) {
-        structuredLog.error('failed to write agent log file', { error: err.message });
+    } catch (err: unknown) {
+        structuredLog.error('failed to write agent log file', { error: errMsg(err) });
     }
 }
 

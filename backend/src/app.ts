@@ -16,6 +16,7 @@ import { getDb } from './db';
 import { getAgentStatus } from './services/hr_agent/scheduler';
 import { loadTokenFromDb } from './services/hr_agent/google_client';
 import { log } from './lib/logger';
+import { errMsg } from './lib/errMsg';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -104,8 +105,8 @@ app.get('/api/health', async (_req, res) => {
         const db = await getDb();
         await db.get('SELECT 1');
         dbOk = true;
-    } catch (err: any) {
-        dbError = err?.message;
+    } catch (err: unknown) {
+        dbError = errMsg(err);
     }
 
     const agentStatus = getAgentStatus();
@@ -130,11 +131,11 @@ app.use((req, res) => {
 // ── Global error handler ──────────────────────────────────────────────────────
 
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    log.error('unhandled error', { url: req.originalUrl, error: err.message });
+    log.error('unhandled error', { url: req.originalUrl, error: errMsg(err) });
     res.status(500).json({
         success: false,
         message: 'Internal server error',
-        ...(NODE_ENV === 'development' && { error: err.message }),
+        ...(NODE_ENV === 'development' && { error: errMsg(err) }),
     });
 });
 

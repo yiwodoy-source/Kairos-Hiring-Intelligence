@@ -1,8 +1,10 @@
 import express from 'express';
+import { errMsg } from '../lib/errMsg';
 import { verifyUnsubscribeToken } from '../services/hr_agent/email_responder';
 import { getDb } from '../db';
 import { runAgentCycle, startAgent, stopAgent, getAgentStatus } from '../services/hr_agent/scheduler';
 import { getLogs } from '../services/hr_agent/logger';
+import { getKairosStatus, getKairosRegistry, getKairosQueue } from '../agents/index';
 import { getOAuth2Client, setGoogleCredentials, encryptToken, loadTokenFromDb, hasCredentials } from '../services/hr_agent/google_client';
 import { exportCandidateRecord } from '../services/hr_agent/candidate_export';
 import { getInterviewAvailability, scheduleCandidateInterview } from '../services/hr_agent/interview_scheduler';
@@ -220,7 +222,7 @@ router.get('/candidates', async (req, res) => {
         const db = await getDb();
         const candidates = await db.all('SELECT * FROM candidates ORDER BY created_at DESC');
         res.json(candidates);
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error fetching candidates:', err);
         res.status(500).json({ error: 'Failed to fetch candidates' });
     }
@@ -367,12 +369,12 @@ router.post('/candidates', async (req, res) => {
             await exportAndPersistCandidate(candidate, db);
             candidate = await db.get('SELECT * FROM candidates WHERE id = ?', result.lastID);
         } catch (exportErr: any) {
-            console.warn('[HR Agent] Candidate created but export failed:', exportErr.message);
+            console.warn('[HR Agent] Candidate created but export failed:', errMsg(exportErr));
         }
 
         res.status(201).json(candidate);
-    } catch (err: any) {
-        if (err.message?.includes('UNIQUE constraint failed') || (err as any).code === '23505') {
+    } catch (err: unknown) {
+        if (errMsg(err)?.includes('UNIQUE constraint failed') || ((err as any)?.code) === '23505') {
             return res.status(409).json({ error: 'Candidate with this email already exists' });
         }
         console.error('[HR Agent] Error adding candidate:', err);
@@ -569,7 +571,7 @@ router.patch('/candidates/:id', async (req, res) => {
                 sheetsLogged: exportedToSheets
             }
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error updating candidate:', err);
         res.status(500).json({ error: 'Failed to update candidate' });
     }
@@ -589,7 +591,7 @@ router.get('/stats', async (req, res) => {
       FROM candidates
     `);
         res.json(stats);
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error fetching stats:', err);
         res.status(500).json({ error: 'Failed to fetch stats' });
     }
@@ -601,7 +603,7 @@ router.get('/employees', async (req, res) => {
         const db = await getDb();
         const employees = await db.all('SELECT * FROM employees ORDER BY name ASC');
         res.json(employees);
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error fetching employees:', err);
         res.status(500).json({ error: 'Failed to fetch employees' });
     }
@@ -645,8 +647,8 @@ router.post('/employees', async (req, res) => {
             message: 'Employee added successfully',
             id: result.lastID 
         });
-    } catch (err: any) {
-        if (err.message?.includes('UNIQUE constraint failed') || (err as any).code === '23505') {
+    } catch (err: unknown) {
+        if (errMsg(err)?.includes('UNIQUE constraint failed') || ((err as any)?.code) === '23505') {
             return res.status(409).json({ error: 'Employee with this email already exists' });
         }
         console.error('[HR Agent] Error adding employee:', err);
@@ -660,7 +662,7 @@ router.get('/jobs', async (req, res) => {
         const db = await getDb();
         const jobs = await db.all('SELECT * FROM jobs ORDER BY posted_date DESC');
         res.json(jobs);
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error fetching jobs:', err);
         res.status(500).json({ error: 'Failed to fetch jobs' });
     }
@@ -708,7 +710,7 @@ router.post('/jobs', async (req, res) => {
 
         const newJob = await db.get('SELECT * FROM jobs WHERE id = ?', result.lastID);
         res.status(201).json(newJob);
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error adding job:', err);
         res.status(500).json({ error: 'Failed to add job' });
     }
@@ -719,7 +721,7 @@ router.post('/run', async (req, res) => {
     try {
         runAgentCycle(); // Async run
         res.json({ message: 'Agent cycle triggered', timestamp: new Date().toISOString() });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error triggering cycle:', err);
         res.status(500).json({ error: 'Failed to trigger agent cycle' });
     }
@@ -741,7 +743,7 @@ router.post('/toggle', async (req, res) => {
         }
 
         res.json({ status: getAgentStatus() });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error toggling agent:', err);
         res.status(500).json({ error: 'Failed to toggle agent' });
     }
@@ -761,18 +763,44 @@ router.post('/trigger/cycle', async (req, res) => {
         res.json({ success: true, ran: true, ts: new Date().toISOString() });
     } catch (err: unknown) {
         console.error('[Cron] Agent cycle error:', err);
-        res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'cycle error' });
+        res.status(500).json({ success: false, error: errMsg(err) });
     }
 });
 
 router.get('/status', async (req, res) => {
     try {
-        const status = getAgentStatus();
+        const legacyStatus = getAgentStatus();
+        const kairosStatus = getKairosStatus();
         const logs = getLogs(20);
-        res.json({ ...status, logs, syncHealth });
-    } catch (err: any) {
+        res.json({ ...legacyStatus, kairos: kairosStatus, logs, syncHealth });
+    } catch (err: unknown) {
         console.error('[HR Agent] Error fetching status:', err);
         res.status(500).json({ error: 'Failed to fetch status' });
+    }
+});
+
+// Kairos swarm — live agent registry
+router.get('/kairos/agents', async (_req, res) => {
+    try {
+        const registry = getKairosRegistry();
+        if (!registry) return res.json({ agents: [] });
+        const agents = await registry.getAll();
+        res.json({ agents });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Kairos swarm — recent task queue
+router.get('/kairos/tasks', async (_req, res) => {
+    try {
+        const queue = getKairosQueue();
+        if (!queue) return res.json({ tasks: [] });
+        const limit = Math.min(Number((_req as any).query?.limit ?? 100), 500);
+        const tasks = await queue.getRecent(limit);
+        res.json({ tasks });
+    } catch (err: unknown) {
+        res.status(500).json({ error: errMsg(err) });
     }
 });
 
@@ -790,7 +818,7 @@ router.get('/notifications', async (_req, res) => {
         const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         const unreadCount = notifications.filter(n => n.created_at >= since).length;
         res.json({ notifications, unreadCount });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Notifications error:', err);
         res.status(500).json({ error: 'Failed to fetch notifications' });
     }
@@ -819,7 +847,7 @@ router.get('/unsubscribe', async (req, res) => {
               <p>You will no longer receive automated recruitment emails from us.</p>
             </body></html>
         `);
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Unsubscribe error:', err);
         return res.status(500).send('An error occurred. Please try again later.');
     }
@@ -839,7 +867,7 @@ router.get('/schedule/availability', async (req, res) => {
             timezone: process.env.INTERVIEW_TIMEZONE || 'Asia/Kolkata',
             slots
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error fetching availability:', err);
         res.status(500).json({ error: getCalendarErrorMessage(err) });
     }
@@ -912,7 +940,7 @@ router.post('/candidates/:id/schedule', async (req, res) => {
             candidate: await db.get('SELECT * FROM candidates WHERE id = ?', candidateId),
             interview: scheduled
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error scheduling interview:', err);
         res.status(500).json({ error: getCalendarErrorMessage(err) });
     }
@@ -927,11 +955,11 @@ router.post('/sync-candidates', async (_req, res) => {
             success: true,
             ...result
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error syncing candidates:', err);
         syncHealth.state = 'error';
         syncHealth.lastAttemptAt = new Date().toISOString();
-        syncHealth.lastError = err.message || 'Failed to sync candidates';
+        syncHealth.lastError = errMsg(err) || 'Failed to sync candidates';
         res.status(500).json({ error: 'Failed to sync candidates' });
     }
 });
@@ -946,11 +974,11 @@ router.post('/sync-shortlisted', async (_req, res) => {
             shortlistedCount: result.candidateCount,
             ...result
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error syncing shortlisted candidates:', err);
         syncHealth.state = 'error';
         syncHealth.lastAttemptAt = new Date().toISOString();
-        syncHealth.lastError = err.message || 'Failed to sync shortlisted candidates';
+        syncHealth.lastError = errMsg(err) || 'Failed to sync shortlisted candidates';
         res.status(500).json({ error: 'Failed to sync shortlisted candidates' });
     }
 });
@@ -977,7 +1005,7 @@ router.get('/auth/url', async (req, res) => {
             ]
         });
         res.json({ url });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error generating auth URL:', err);
         res.status(500).json({ error: 'Failed to generate auth URL' });
     }
@@ -1011,7 +1039,7 @@ router.get('/auth/callback', async (req, res) => {
                 );
                 console.log('[HR Agent] Refresh token saved to database');
             } catch (dbErr: any) {
-                console.warn('[HR Agent] Could not persist token to database:', dbErr.message);
+                console.warn('[HR Agent] Could not persist token to database:', errMsg(dbErr));
             }
 
             // 3. Redirect straight back to the app Settings page
@@ -1089,7 +1117,7 @@ router.delete('/jobs/:id', async (req, res) => {
         if (!job) return res.status(404).json({ error: 'Job not found' });
         await db.run('DELETE FROM jobs WHERE id = ?', id);
         res.json({ success: true, id });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error deleting job:', err);
         res.status(500).json({ error: 'Failed to delete job' });
     }
@@ -1107,7 +1135,7 @@ router.delete('/candidates/:id', async (req, res) => {
         if (!candidate) return res.status(404).json({ error: 'Candidate not found' });
         await db.run('DELETE FROM candidates WHERE id = ?', id);
         res.json({ success: true, id });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error deleting candidate:', err);
         res.status(500).json({ error: 'Failed to delete candidate' });
     }
@@ -1143,9 +1171,9 @@ router.post('/candidates/:id/outreach', async (req, res) => {
 
         const updated = await db.get('SELECT * FROM candidates WHERE id = ?', id);
         res.json({ success: true, emailSent: true, message: `Outreach sent to ${candidate.email}`, candidate: updated });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Outreach error:', err);
-        res.status(500).json({ error: err.message || 'Failed to send outreach email' });
+        res.status(500).json({ error: errMsg(err) || 'Failed to send outreach email' });
     }
 });
 
@@ -1190,8 +1218,8 @@ router.get('/integration-status', async (_req, res) => {
                 const profile = await gmail.users.getProfile({ userId: 'me' });
                 tokenValid = true;
                 connectedEmail = profile.data.emailAddress ?? null;
-            } catch (err: any) {
-                const msg: string = err?.response?.data?.error || err?.message || 'unknown';
+            } catch (err: unknown) {
+                const msg: string = (err as any)?.response?.data?.error || errMsg(err);
                 tokenError = msg.includes('invalid_grant')
                     ? 'Refresh token expired or revoked — re-authorization required.'
                     : msg.includes('invalid_client')
@@ -1237,7 +1265,7 @@ router.get('/integration-status', async (_req, res) => {
                 configured: Boolean(process.env.OPENROUTER_API_KEY),
             },
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Integration status error:', err);
         res.status(500).json({ error: 'Failed to fetch integration status' });
     }
@@ -1325,12 +1353,12 @@ router.post('/import', async (req, res) => {
                 else skipped++;
 
             } catch (rowErr: any) {
-                errors.push(`Row ${i + 1}: ${rowErr.message}`);
+                errors.push(`Row ${i + 1}: ${errMsg(rowErr)}`);
             }
         }
 
         res.json({ success: true, inserted, skipped, errors: errors.slice(0, 50) });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Import error:', err);
         res.status(500).json({ error: 'Import failed' });
     }
@@ -1349,7 +1377,7 @@ router.get('/candidates/:id/events', async (req, res) => {
             id
         );
         res.json(events);
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Error fetching candidate events:', err);
         res.status(500).json({ error: 'Failed to fetch events' });
     }
@@ -1450,7 +1478,7 @@ router.post('/batch-screen', async (req, res) => {
         }
 
         res.json({ success: true, processed: candidates.length, shortlisted, rejected, reviewRequired, results });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Batch screen error:', err);
         res.status(500).json({ error: 'Batch re-screen failed' });
     }
@@ -1518,7 +1546,7 @@ router.post('/trigger/screener', async (_req, res) => {
         }
 
         res.json({ success: true, processed: candidates.length, shortlisted, rejected, reviewRequired });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Screener trigger error:', err);
         res.status(500).json({ error: 'Screener trigger failed' });
     }
@@ -1605,8 +1633,8 @@ router.post('/trigger/sourcer', async (req, res) => {
                 } else {
                     summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: result.error });
                 }
-            } catch (err: any) {
-                summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err.message });
+            } catch (err: unknown) {
+                summary.push({ source: 'LinkedIn', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: errMsg(err) });
             }
         }
 
@@ -1628,7 +1656,7 @@ router.post('/trigger/sourcer', async (req, res) => {
                     summary.push({ source: 'GitHub', role, found: candidates.length, imported, shortlisted, review, rejected });
                 }
             } catch (err: unknown) {
-                summary.push({ source: 'GitHub', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err instanceof Error ? err.message : 'GitHub sourcer error' });
+                summary.push({ source: 'GitHub', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: errMsg(err) });
             }
         }
 
@@ -1650,7 +1678,7 @@ router.post('/trigger/sourcer', async (req, res) => {
                     summary.push({ source: 'Stack Overflow', role, found: candidates.length, imported, shortlisted, review, rejected });
                 }
             } catch (err: unknown) {
-                summary.push({ source: 'Stack Overflow', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err instanceof Error ? err.message : 'Stack Overflow sourcer error' });
+                summary.push({ source: 'Stack Overflow', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: errMsg(err) });
             }
         }
 
@@ -1673,7 +1701,7 @@ router.post('/trigger/sourcer', async (req, res) => {
                     summary.push({ source: 'Python Scraper', role, found: candidates.length, imported, shortlisted, review, rejected });
                 }
             } catch (err: unknown) {
-                summary.push({ source: 'Python Scraper', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err instanceof Error ? err.message : 'Python sourcer error' });
+                summary.push({ source: 'Python Scraper', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: errMsg(err) });
             }
         }
 
@@ -1691,8 +1719,8 @@ router.post('/trigger/sourcer', async (req, res) => {
                     } catch { /* skip */ }
                 }
                 summary.push({ source: 'Merge.dev', role: 'All roles', found: mergeCandidates.length, imported, shortlisted, review, rejected });
-            } catch (err: any) {
-                summary.push({ source: 'Merge.dev', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: err.message });
+            } catch (err: unknown) {
+                summary.push({ source: 'Merge.dev', role: 'All roles', found: 0, imported: 0, shortlisted: 0, review: 0, rejected: 0, error: errMsg(err) });
             }
         }
 
@@ -1716,9 +1744,9 @@ router.post('/trigger/sourcer', async (req, res) => {
             : `Sourcer scanned ${openJobs.length} role${openJobs.length !== 1 ? 's' : ''} via ${activeSources}. ${totalFound > 0 ? `Found ${totalFound} but all were duplicates.` : 'No new candidates found.'}`;
 
         res.json({ success: true, imported: totalImported, found: totalFound, shortlisted: totalShortlisted, review: totalReview, rejected: totalRejected, summary, message });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Sourcer trigger error:', err);
-        res.status(500).json({ error: 'Sourcer trigger failed', detail: err.message });
+        res.status(500).json({ error: 'Sourcer trigger failed', detail: errMsg(err) });
     }
 });
 
@@ -1786,7 +1814,7 @@ router.get('/sourcer/config', async (_req, res) => {
                 recentSourced,
             },
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Sourcer config error:', err);
         res.status(500).json({ error: 'Failed to load sourcer config' });
     }
@@ -2083,7 +2111,7 @@ router.post('/trigger/outreach', async (_req, res) => {
                 ? `Outreach sent to ${sent} shortlisted candidate${sent !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}.`
                 : 'No shortlisted candidates pending outreach.',
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Outreach trigger error:', err);
         res.status(500).json({ error: 'Outreach trigger failed' });
     }
@@ -2126,7 +2154,7 @@ router.post('/trigger/scheduler', async (_req, res) => {
                 ? `Interview confirmation queued for ${queued} candidate${queued !== 1 ? 's' : ''}. Awaiting their reply to confirm slots.`
                 : 'No candidates currently eligible for interview scheduling. Ensure outreach has been sent first.',
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Scheduler trigger error:', err);
         res.status(500).json({ error: 'Scheduler trigger failed' });
     }
@@ -2169,7 +2197,7 @@ router.post('/trigger/coordinator', async (_req, res) => {
                 ? `Pipeline health: ${health}. Action needed: ${actions.join('; ')}.`
                 : `Pipeline health: ${health}. All ${(total as any).n} candidates are processed with no blockers.`,
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('[HR Agent] Coordinator trigger error:', err);
         res.status(500).json({ error: 'Coordinator trigger failed' });
     }
@@ -2200,16 +2228,16 @@ router.post(
             let cvText: string;
             try {
                 cvText = await extractTextFromPdf(buffer);
-            } catch (err: any) {
-                return res.status(422).json({ error: `PDF parsing failed: ${err.message}` });
+            } catch (err: unknown) {
+                return res.status(422).json({ error: `PDF parsing failed: ${errMsg(err)}` });
             }
 
             // 2. AI analysis
             let aiData: any;
             try {
                 aiData = await analyzeCandidateCV(cvText);
-            } catch (err: any) {
-                return res.status(422).json({ error: `AI analysis failed: ${err.message}` });
+            } catch (err: unknown) {
+                return res.status(422).json({ error: `AI analysis failed: ${errMsg(err)}` });
             }
 
             const db = await getDb();
@@ -2332,9 +2360,9 @@ router.post(
                 },
                 quickSummary,
             });
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('[HR Agent] CV upload error:', err);
-            res.status(500).json({ error: err.message || 'CV upload failed' });
+            res.status(500).json({ error: errMsg(err) || 'CV upload failed' });
         }
     }
 );

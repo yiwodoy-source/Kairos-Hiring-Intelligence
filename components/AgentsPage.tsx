@@ -67,6 +67,27 @@ interface ActionBanner {
   message: string;
 }
 
+interface KairosAgent {
+  agentId: string;
+  agentType: string;
+  status: string;
+  currentLoad: number;
+  lastHeartbeat: string | null;
+  capabilities: string[];
+}
+
+interface KairosTask {
+  taskId: string;
+  taskType: string;
+  status: string;
+  priority: number;
+  assignedTo: string | null;
+  createdAt: string;
+  error: string | null;
+  retries: number;
+  maxRetries: number;
+}
+
 interface SourcerConfig {
   linkedin: { sessionActive: boolean; scriptReady: boolean };
   scrapeGraph: { configured: boolean };
@@ -180,6 +201,175 @@ const AGENT_DEFS = [
     triggerEndpoint: '/api/hr-agent/trigger/coordinator',
   },
 ] as const;
+
+// ---------------------------------------------------------------------------
+// Kairos config maps
+// ---------------------------------------------------------------------------
+
+const KAIROS_TYPE_CONFIG: Record<string, { color: string; borderColor: string; label: string }> = {
+  orchestrator: { color: 'text-indigo-500',  borderColor: '#6366F1', label: 'Orchestrator' },
+  intake:       { color: 'text-amber-500',   borderColor: '#E8962A', label: 'Intake' },
+  analyzer:     { color: 'text-cyan-500',    borderColor: '#06B6D4', label: 'Analyzer' },
+  matcher:      { color: 'text-emerald-500', borderColor: '#10B981', label: 'Matcher' },
+  outreach:     { color: 'text-amber-400',   borderColor: '#F59E0B', label: 'Outreach' },
+  scheduler:    { color: 'text-pink-500',    borderColor: '#EC4899', label: 'Scheduler' },
+  sourcer:      { color: 'text-violet-500',  borderColor: '#8B5CF6', label: 'Sourcer' },
+};
+
+const TASK_STATUS_CONFIG: Record<string, { cls: string; label: string }> = {
+  pending:   { cls: 'bg-amber-50 text-amber-700 border-amber-200',      label: 'Pending'   },
+  assigned:  { cls: 'bg-blue-50 text-blue-700 border-blue-200',         label: 'Assigned'  },
+  running:   { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200',label: 'Running'   },
+  done:      { cls: 'bg-slate-100 text-slate-500 border-slate-200',     label: 'Done'      },
+  failed:    { cls: 'bg-rose-50 text-rose-700 border-rose-200',         label: 'Failed'    },
+  cancelled: { cls: 'bg-slate-100 text-slate-400 border-slate-200',     label: 'Cancelled' },
+};
+
+// ---------------------------------------------------------------------------
+// Kairos Swarm Section component
+// ---------------------------------------------------------------------------
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return 'never';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  return `${Math.round(diff / 3_600_000)}h ago`;
+}
+
+interface KairosSwarmSectionProps {
+  agents: KairosAgent[];
+  tasks: KairosTask[];
+  swarm: { status: string; agentCount?: number } | null;
+}
+
+const KairosSwarmSection: React.FC<KairosSwarmSectionProps> = ({ agents, tasks, swarm }) => {
+  const isOnline = swarm?.status === 'running';
+
+  return (
+    <div className="rounded-2xl border border-indigo-100 bg-white overflow-hidden shadow-sm">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-indigo-50/60 to-white border-b border-indigo-100">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-indigo-100 flex items-center justify-center">
+            <Network className="w-4.5 h-4.5 text-indigo-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">Kairos Live Swarm</h3>
+            <p className="text-xs text-slate-400">Autonomous multi-agent orchestration</p>
+          </div>
+        </div>
+        <div className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border ${
+          isOnline
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            : 'bg-slate-50 border-slate-200 text-slate-500'
+        }`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+          {isOnline ? `${swarm?.agentCount ?? agents.length} agents online` : 'Swarm offline'}
+        </div>
+      </div>
+
+      <div className="p-5 space-y-5">
+        {/* Agent registry chips */}
+        {agents.length > 0 ? (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Agent Registry</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2">
+              {agents.map(agent => {
+                const cfg = KAIROS_TYPE_CONFIG[agent.agentType] ?? {
+                  color: 'text-slate-500',
+                  borderColor: '#94a3b8',
+                  label: agent.agentType,
+                };
+                const isAlive = agent.status === 'active';
+                return (
+                  <div
+                    key={agent.agentId}
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                    style={{ borderLeft: `3px solid ${cfg.borderColor}` }}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className={`text-[11px] font-bold uppercase tracking-wide ${cfg.color}`}>
+                        {cfg.label}
+                      </span>
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        isAlive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-300'
+                      }`} />
+                    </div>
+                    <p className="text-[11px] text-slate-600">
+                      Load <span className={`font-bold ${agent.currentLoad > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {agent.currentLoad}
+                      </span>
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+                      {relativeTime(agent.lastHeartbeat)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <Network className="w-8 h-8 text-slate-200 mb-2" />
+            <p className="text-sm text-slate-400">No agents registered yet.</p>
+            <p className="text-xs text-slate-400 mt-0.5">Start the backend to bring the swarm online.</p>
+          </div>
+        )}
+
+        {/* Task queue table */}
+        {tasks.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+              Recent Task Queue
+            </p>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    {['Task Type', 'Status', 'Pri', 'Agent', 'Age'].map(h => (
+                      <th key={h} className="text-left px-4 py-2.5 font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {tasks.slice(0, 12).map(task => {
+                    const sc = TASK_STATUS_CONFIG[task.status] ?? {
+                      cls: 'bg-slate-100 text-slate-500 border-slate-200',
+                      label: task.status,
+                    };
+                    const agentType = task.assignedTo
+                      ? (agents.find(a => a.agentId === task.assignedTo)?.agentType ?? '—')
+                      : '—';
+                    return (
+                      <tr key={task.taskId} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="px-4 py-2.5 font-medium text-slate-700 whitespace-nowrap">
+                          {task.taskType.replace(/_/g, ' ')}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${sc.cls}`}>
+                            {sc.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-500 font-mono">{task.priority}</td>
+                        <td className="px-4 py-2.5 text-slate-500 capitalize">{agentType}</td>
+                        <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">
+                          {relativeTime(task.createdAt)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -425,7 +615,7 @@ const SourcingPanel: React.FC<SourcingPanelProps> = ({
               </p>
               <div className="space-y-1.5">
                 {sourcerConfig.stats.recentSourced.map((c, i) => (
-                  <div key={i} className="flex items-center justify-between gap-2 text-xs px-2 py-1 rounded-lg bg-slate-50">
+                  <div key={`${c.first_name}-${c.last_name}-${c.source}-${i}`} className="flex items-center justify-between gap-2 text-xs px-2 py-1 rounded-lg bg-slate-50">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <Users className="w-3 h-3 text-slate-400 shrink-0" />
                       <span className="text-slate-700 truncate">{c.first_name} {c.last_name}</span>
@@ -787,7 +977,7 @@ const ActivityLog: React.FC<ActivityLogProps> = ({ logs, onRefresh, refreshing }
         {logs.length > 0 ? (
           <div className="space-y-1.5">
             {logs.map((log, index) => (
-              <p key={index} className="leading-5 text-slate-600">
+              <p key={`${index}-${log.slice(0, 32)}`} className="leading-5 text-slate-600">
                 <span className="mr-2 text-slate-400">[{index}]</span>
                 {log}
               </p>
@@ -880,6 +1070,9 @@ export const AgentsPage: React.FC = () => {
   const [sourcingPanelOpen, setSourcingPanelOpen] = useState(false);
   const [openJobs, setOpenJobs] = useState<OpenJobItem[]>([]);
   const [sourcingResult, setSourcingResult] = useState<{ shortlisted: number; review: number; rejected: number; imported: number; message?: string } | null>(null);
+  const [kairosAgents, setKairosAgents] = useState<KairosAgent[]>([]);
+  const [kairosTasks, setKairosTasks] = useState<KairosTask[]>([]);
+  const [kairosSwarm, setKairosSwarm] = useState<{ status: string; agentCount?: number } | null>(null);
 
   // ── Toast helpers ──────────────────────────────────────────────────────────
   const addToast = useCallback((type: Toast['type'], message: string) => {
@@ -906,6 +1099,8 @@ export const AgentsPage: React.FC = () => {
       ]);
       setAgentStatus(statusData);
       setStats(statsData);
+      const anyStatus = statusData as unknown as Record<string, any>;
+      if (anyStatus.kairos) setKairosSwarm(anyStatus.kairos);
     } catch (err) {
       console.error('[AgentsPage] Fetch error:', err);
     }
@@ -920,6 +1115,16 @@ export const AgentsPage: React.FC = () => {
     try {
       const jobs = await apiFetch<OpenJobItem[]>('/api/hr-agent/jobs');
       setOpenJobs(jobs.filter((j: OpenJobItem) => j.status === 'Open'));
+    } catch { /* non-critical */ }
+
+    // Kairos live swarm data (non-critical)
+    try {
+      const [agentsRes, tasksRes] = await Promise.all([
+        apiFetch<{ agents: KairosAgent[] }>('/api/hr-agent/kairos/agents'),
+        apiFetch<{ tasks: KairosTask[] }>('/api/hr-agent/kairos/tasks'),
+      ]);
+      setKairosAgents(agentsRes.agents ?? []);
+      setKairosTasks(tasksRes.tasks ?? []);
     } catch { /* non-critical */ }
 
     setLoading(false);
@@ -1252,6 +1457,13 @@ export const AgentsPage: React.FC = () => {
 
       {/* ── Stats bar ── */}
       <StatBar stats={stats} />
+
+      {/* ── Kairos live swarm ── */}
+      <KairosSwarmSection
+        agents={kairosAgents}
+        tasks={kairosTasks}
+        swarm={kairosSwarm}
+      />
 
       {/* ── Sync health ── */}
       <SyncHealthBanner syncHealth={agentStatus.syncHealth} />

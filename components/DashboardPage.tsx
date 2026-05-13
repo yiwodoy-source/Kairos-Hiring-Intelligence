@@ -49,6 +49,11 @@ interface AgentStatusResponse {
     state?: string;
   };
   logs?: string[];
+  kairos?: {
+    status: string;
+    agentCount?: number;
+    agents?: { agentId: string; agentType: string; load: number }[];
+  };
 }
 
 type AgentRunState = 'Running' | 'Idle' | 'Error';
@@ -254,31 +259,44 @@ export function DashboardPage({ employees, jobs, candidates, onNavigate }: Dashb
     const isRunning = agentStatus?.status === 'Running' || agentStatus?.status === 'running';
     const shortlisted = agentStatus?.stats?.shortlisted ?? 0;
     const processed = agentStatus?.stats?.processed ?? 0;
+    const kairosOnline = agentStatus?.kairos?.status === 'running';
+    const kairosAgents = agentStatus?.kairos?.agents ?? [];
+
+    const getState = (uiType: string, kairosType: string): AgentRunState => {
+      if (isError) return 'Error';
+      if (kairosOnline) {
+        const ka = kairosAgents.find(a => a.agentType === kairosType);
+        if (ka) return ka.load > 0 ? 'Running' : 'Idle';
+        return 'Idle';
+      }
+      if (isRunning && (uiType === 'intake' || uiType === 'screener' || uiType === 'coordinator')) return 'Running';
+      return 'Idle';
+    };
 
     return {
       intake: {
-        state: isError ? 'Error' : isRunning ? 'Running' : 'Idle',
-        activity: isRunning ? `${processed} resumes processed` : 'Standby',
+        state: getState('intake', 'intake'),
+        activity: getState('intake', 'intake') === 'Running' ? `${processed} resumes processed` : 'Standby',
       },
       screener: {
-        state: isError ? 'Error' : isRunning ? 'Running' : 'Idle',
-        activity: isRunning ? 'Scoring candidates' : 'Standby',
+        state: getState('screener', 'analyzer'),
+        activity: getState('screener', 'analyzer') === 'Running' ? 'Scoring candidates' : 'Standby',
       },
       sourcer: {
-        state: isError ? 'Error' : 'Idle',
-        activity: 'Standby',
+        state: getState('sourcer', 'sourcer'),
+        activity: getState('sourcer', 'sourcer') === 'Running' ? 'Sourcing candidates' : 'Standby',
       },
       outreach: {
-        state: isError ? 'Error' : 'Idle',
-        activity: shortlisted > 0 ? `${shortlisted} candidates queued` : 'Standby',
+        state: getState('outreach', 'outreach'),
+        activity: getState('outreach', 'outreach') === 'Running' ? 'Sending outreach' : (shortlisted > 0 ? `${shortlisted} queued` : 'Standby'),
       },
       scheduler: {
-        state: isError ? 'Error' : 'Idle',
-        activity: 'Standby',
+        state: getState('scheduler', 'scheduler'),
+        activity: getState('scheduler', 'scheduler') === 'Running' ? 'Booking interviews' : 'Standby',
       },
       coordinator: {
-        state: isError ? 'Error' : isRunning ? 'Running' : 'Idle',
-        activity: isRunning ? 'Orchestrating pipeline' : 'Standby',
+        state: getState('coordinator', 'orchestrator'),
+        activity: getState('coordinator', 'orchestrator') === 'Running' ? 'Orchestrating pipeline' : (kairosOnline ? `${kairosAgents.length} agents online` : 'Standby'),
       },
     };
   }, [agentStatus]);
@@ -456,7 +474,7 @@ export function DashboardPage({ employees, jobs, candidates, onNavigate }: Dashb
             ) : (
               <ol className="flex flex-1 flex-col gap-3 overflow-y-auto">
                 {logEntries.map((entry, i) => (
-                  <li key={i} className="flex items-start gap-3 group">
+                  <li key={`${i}-${entry.slice(0, 32)}`} className="flex items-start gap-3 group">
                     <span
                       className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
                       style={{ backgroundColor: logDotColors[i % logDotColors.length] }}

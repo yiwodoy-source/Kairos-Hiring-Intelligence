@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { google } from 'googleapis';
+import { errMsg } from '../../lib/errMsg';
 
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
   console.warn('[GOOGLE AUTH] WARNING: Google OAuth credentials are not configured. Some features will be disabled.');
@@ -64,8 +65,8 @@ export function loadTokenFromDb(): Promise<void> {
                 oauth2Client.setCredentials({ refresh_token: refreshToken });
                 console.log('[GOOGLE AUTH] Loaded refresh token from database');
             }
-        } catch (err: any) {
-            console.warn('[GOOGLE AUTH] Could not load refresh token from database:', err.message);
+        } catch (err: unknown) {
+            console.warn('[GOOGLE AUTH] Could not load refresh token from database:', errMsg(err));
             // Reset so a transient DB error doesn't permanently block future loads
             _tokenLoadPromise = null;
         }

@@ -49,6 +49,7 @@ const SettingsPage  = React.lazy(() => import('./components/SettingsPage').then(
 
 // Non-lazy (small, needed immediately in topbar)
 import { ImportModal } from './components/ImportModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // ---------------------------------------------------------------------------
 // NOTIFICATION BELL
@@ -685,28 +686,6 @@ const CommandPalette = React.memo<CommandPaletteProps>(({ isOpen, onClose, emplo
 CommandPalette.displayName = 'CommandPalette';
 
 // ---------------------------------------------------------------------------
-// ERROR BOUNDARY
-// ---------------------------------------------------------------------------
-interface ErrorBoundaryState { hasError: boolean; error?: Error; }
-interface ErrorBoundaryProps { fallback: (error?: Error) => React.ReactNode; children: React.ReactNode; }
-
-class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
-  }
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[ErrorBoundary]', error, info);
-  }
-  render() {
-    if (this.state.hasError) return (this.props as any).fallback(this.state.error);
-    return (this.props as any).children;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // DATA HOOK — unchanged from existing
 // ---------------------------------------------------------------------------
@@ -810,7 +789,7 @@ export default function App() {
     setIsSidebarOpen(true);
   }, []);
 
-  const { employees, jobs, candidates, error, setJobs, setCandidates } =
+  const { employees, jobs, candidates, error, refetch, setJobs, setCandidates } =
     useLiveData(isAuthenticated, handleAuthFailure);
 
   // Global keyboard shortcuts
@@ -860,7 +839,9 @@ export default function App() {
   // View renderer
   const renderView = () => {
     const wrap = (children: React.ReactNode) => (
-      <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">{children}</div>
+      <ErrorBoundary key={activeView} fallbackLabel={`Error loading ${info.title}`}>
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">{children}</div>
+      </ErrorBoundary>
     );
 
     switch (activeView) {
@@ -889,7 +870,7 @@ export default function App() {
           </React.Suspense>
         );
       case VIEW.EMPLOYEES:
-        return wrap(<Employees employees={employees} />);
+        return wrap(<Employees employees={employees} onEmployeeAdded={refetch} />);
       case VIEW.ANALYTICS:
         return wrap(<CyberDashboard />);
       case VIEW.RECRUITMENT:
@@ -1038,34 +1019,7 @@ export default function App() {
           ref={mainContentRef}
           className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8"
         >
-          <ErrorBoundary
-            fallback={(err?: Error) => (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center p-8 bg-red-50 dark:bg-red-900/20 rounded-2xl max-w-md">
-                  <svg className="w-12 h-12 text-red-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <h3 className="text-base font-semibold text-red-900 dark:text-red-100 mb-2">
-                    Failed to load component
-                  </h3>
-                  {err && (
-                    <p className="text-xs font-mono text-red-500 dark:text-red-400 mb-3 bg-red-100 dark:bg-red-900/40 rounded p-2 text-left break-all">
-                      {err.message}
-                    </p>
-                  )}
-                  <p className="text-sm text-red-600 dark:text-red-400 mb-4">
-                    Something went wrong loading this view.
-                  </p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
-                  >
-                    Reload Page
-                  </button>
-                </div>
-              </div>
-            )}
-          >
+          <ErrorBoundary fallbackLabel="Failed to load component">
             <Suspense
               fallback={
                 <div className="flex items-center justify-center h-64">

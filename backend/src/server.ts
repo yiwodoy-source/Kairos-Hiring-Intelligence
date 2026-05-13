@@ -1,30 +1,34 @@
 import app from './app';
 import { bootstrap } from './core/container';
-import { initializeAgent } from './services/hr_agent/scheduler';
 import { loadTokenFromDb } from './services/hr_agent/google_client';
+import { startKairosSwarm, stopKairosSwarm } from './agents/index';
 import { log } from './lib/logger';
+import { errMsg } from './lib/errMsg';
 
 const PORT: number = parseInt(process.env.PORT || '3001', 10);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const server = app.listen(PORT, '0.0.0.0', async () => {
     log.info('server started', { port: PORT, env: NODE_ENV });
+
     try {
         await loadTokenFromDb();
         log.info('google token loaded');
-    } catch (err: any) {
-        log.warn('google token load skipped', { error: err.message });
+    } catch (err: unknown) {
+        log.warn('google token load skipped', { error: errMsg(err) });
     }
+
     try {
-        await initializeAgent();
-        log.info('agent initialized');
-    } catch (err: any) {
-        log.error('agent initialization failed', { error: err.message });
+        await startKairosSwarm();
+        log.info('kairos swarm started');
+    } catch (err: unknown) {
+        log.error('kairos swarm failed to start', { error: errMsg(err) });
     }
 });
 
 const gracefulShutdown = async (signal: string) => {
     log.info('shutdown signal received', { signal });
+    await stopKairosSwarm().catch(() => {});
     server.close(() => {
         log.info('http server closed');
         process.exit(0);
@@ -32,7 +36,7 @@ const gracefulShutdown = async (signal: string) => {
     setTimeout(() => {
         log.error('force shutdown after timeout');
         process.exit(1);
-    }, 30000);
+    }, 30_000);
 };
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

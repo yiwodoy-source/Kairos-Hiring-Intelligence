@@ -34,11 +34,12 @@ export const verifyToken = (req: AuthRequest, res: Response, next: NextFunction)
 
         req.user = decoded;
         next();
-    } catch (err: any) {
+    } catch (err: unknown) {
         let message = 'Invalid or expired token.';
-        if (err.name === 'TokenExpiredError') {
+        const errName = err instanceof Error ? err.name : '';
+        if (errName === 'TokenExpiredError') {
             message = 'Token has expired.';
-        } else if (err.name === 'JsonWebTokenError') {
+        } else if (errName === 'JsonWebTokenError') {
             message = 'Invalid token.';
         }
         console.log(`[AUTH] Token verification failed: ${message} from IP: ${req.ip}`);

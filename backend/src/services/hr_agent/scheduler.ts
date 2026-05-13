@@ -8,6 +8,7 @@ import { sendAutomatedReply } from './email_responder';
 import { logAgentActivity } from './logger';
 import { getDb } from '../../db';
 import cron from 'node-cron';
+import { errMsg } from '../../lib/errMsg';
 
 let isRunning = false;
 let agentStatus: 'Running' | 'Stopped' = 'Stopped';
@@ -110,7 +111,7 @@ export async function runAgentCycle() {
                 try {
                     driveLink = await uploadCVToDrive(cv.attachmentBuffer, cv.fileName);
                 } catch (driveErr: any) {
-                    logAgentActivity(`Drive upload failed for ${cv.email}: ${driveErr.message}`, 'WARN');
+                    logAgentActivity(`Drive upload failed for ${cv.email}: ${errMsg(driveErr)}`, 'WARN');
                 }
 
                 await db.run(`
@@ -194,7 +195,7 @@ export async function runAgentCycle() {
                         logAgentActivity(`Sheets logging did not complete for ${cv.email}`, 'WARN');
                     }
                 } catch (sheetsErr: any) {
-                    logAgentActivity(`Sheets logging failed: ${sheetsErr.message}`, 'WARN');
+                    logAgentActivity(`Sheets logging failed: ${errMsg(sheetsErr)}`, 'WARN');
                 }
 
                 try {
@@ -205,18 +206,18 @@ export async function runAgentCycle() {
                         assessment.matchedJobTitle || assessment.inferredTargetRole
                     );
                 } catch (emailErr: any) {
-                    logAgentActivity(`Auto-reply failed: ${emailErr.message}`, 'WARN');
+                    logAgentActivity(`Auto-reply failed: ${errMsg(emailErr)}`, 'WARN');
                 }
 
                 try {
                     await markAsProcessed(cv.messageId, cv.email, cv.subject, assessment.status);
                 } catch (markErr: any) {
-                    logAgentActivity(`Failed to mark as processed: ${markErr.message}`, 'WARN');
+                    logAgentActivity(`Failed to mark as processed: ${errMsg(markErr)}`, 'WARN');
                 }
 
                 logAgentActivity(`Successfully processed ${cv.source} CV from ${cv.email}`);
-            } catch (err: any) {
-                logAgentActivity(`Error processing CV: ${err.message}`, 'ERROR');
+            } catch (err: unknown) {
+                logAgentActivity(`Error processing CV: ${errMsg(err)}`, 'ERROR');
             }
         }
 
@@ -234,11 +235,11 @@ export function startAgent() {
         logAgentActivity('Agent already running', 'WARN');
         return;
     }
-    getDb().catch(err => logAgentActivity(`DB Init failed: ${err.message}`, 'ERROR'));
+    getDb().catch(err => logAgentActivity(`DB Init failed: ${errMsg(err)}`, 'ERROR'));
     const cronInterval = process.env.CRON_INTERVAL || '*/1 * * * *';
     job = cron.schedule(cronInterval, () => {
         runAgentCycle().catch(err => {
-            logAgentActivity(`Unhandled error: ${err.message}`, 'ERROR');
+            logAgentActivity(`Unhandled error: ${errMsg(err)}`, 'ERROR');
             isRunning = false;
         });
     });
