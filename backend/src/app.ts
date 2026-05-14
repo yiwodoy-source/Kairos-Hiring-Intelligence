@@ -11,6 +11,7 @@ import authRoutes from './routes/auth';
 import hrAgentRoutes from './routes/hr_agent';
 import integrationRoutes from './routes/integrations';
 import openClawRoutes from './routes/openclaw';
+import kairosProxyRoutes from './routes/kairos_proxy';
 import { verifyToken } from './middleware/authMiddleware';
 import { getDb } from './db';
 import { getAgentStatus } from './services/hr_agent/scheduler';
@@ -91,6 +92,9 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/ai', verifyToken, aiRoutes);
 app.use('/api/integrations', verifyToken, integrationRoutes);
 app.use('/api/openclaw', verifyToken, openClawRoutes);
+// OpenAI-compatible proxy for OpenClaw — no auth, local-only calls
+app.use('/api/v1', kairosProxyRoutes);
+
 app.use('/api/hr-agent', (req, res, next) => {
     if (req.path === '/auth/callback' || req.path === '/unsubscribe') return next();
     return verifyToken(req, res, next);
