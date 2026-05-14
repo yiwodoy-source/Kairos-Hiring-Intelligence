@@ -50,6 +50,22 @@ router.post('/chat/completions', async (req, res) => {
 
     const reply = await generateKairosReply(userMsg, phone ?? null, systemMsg);
 
+    // Persist messages so Kairos UI can show the conversation
+    if (phone && userMsg) {
+      try {
+        const db = await getDb();
+        const now = new Date().toISOString();
+        await db.run(
+          `INSERT INTO whatsapp_messages (phone, direction, body, created_at) VALUES (?, 'inbound', ?, ?)`,
+          [phone, userMsg, now]
+        );
+        await db.run(
+          `INSERT INTO whatsapp_messages (phone, direction, body, created_at) VALUES (?, 'outbound', ?, ?)`,
+          [phone, reply, now]
+        );
+      } catch { /* best-effort */ }
+    }
+
     const response = {
       id: `chatcmpl-kairos-${Date.now()}`,
       object: 'chat.completion',
