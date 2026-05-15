@@ -170,6 +170,16 @@ export async function sendAutomatedReply(
             throw new Error('Invalid email address');
         }
 
+        // Safety: never reply to automated/system senders
+        const localPart = safeTo.split('@')[0].toLowerCase();
+        const domain = safeTo.split('@')[1]?.toLowerCase() || '';
+        const NO_REPLY_PREFIXES = ['noreply', 'no-reply', 'donotreply', 'mailer-daemon', 'postmaster', 'bounce', 'notification', 'newsletter', 'automated', 'system'];
+        const NO_REPLY_DOMAINS = ['google.com', 'googlemail.com', 'facebookmail.com', 'linkedin.com', 'indeed.com', 'naukri.com', 'amazonses.com', 'sendgrid.net', 'mailchimp.com'];
+        if (NO_REPLY_PREFIXES.some(p => localPart.startsWith(p)) || NO_REPLY_DOMAINS.includes(domain)) {
+            logAgentActivity(`Skipping auto-reply to automated sender: ${safeTo}`, 'WARN');
+            return;
+        }
+
         const companyName = process.env.COMPANY_NAME || 'K. Girdharlal International';
         const calendlyUrl = process.env.CALENDLY_URL || process.env.INTERVIEW_CALENDAR_URL || '';
 
