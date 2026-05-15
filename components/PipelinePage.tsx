@@ -361,19 +361,20 @@ const DetailDrawer: React.FC<DetailDrawerProps> = ({
     await onStatusChange(candidate.id, next);
   };
 
-  // Send WhatsApp message
+  // Send WhatsApp notification (status-aware message via Priya bot)
   const handleSendWhatsApp = async () => {
     setWhatsappSending(true);
     setWhatsappMessage(null);
     try {
-      await apiFetch(`/api/integrations/whatsapp/send-candidate`, {
+      await apiFetch(`/api/hr-agent/whatsapp/notify`, {
         method: 'POST',
         body: JSON.stringify({ candidateId: candidate.id }),
       });
       setWhatsappMessage({ text: 'WhatsApp sent ✓', type: 'success' });
+      onCandidateUpdate(candidate.id, { communicationStatus: 'WhatsApp Notified' });
     } catch (err: unknown) {
       const detail = err instanceof Error ? err.message : 'Failed to send WhatsApp';
-      setWhatsappMessage({ text: detail.includes('not configured') ? 'WhatsApp not configured' : detail, type: 'error' });
+      setWhatsappMessage({ text: detail.includes('no phone') ? 'No phone number on record' : detail, type: 'error' });
     } finally {
       setWhatsappSending(false);
     }

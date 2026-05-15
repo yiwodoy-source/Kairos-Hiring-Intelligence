@@ -789,6 +789,19 @@ export default function App() {
     setIsSidebarOpen(true);
   }, []);
 
+  // Trigger agent cycle every 2 minutes from any page while authenticated.
+  // Vercel serverless pauses between requests so in-memory timers in the agent
+  // are unreliable — this client-driven HTTP trigger guarantees processing.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const triggerCycle = () => {
+      apiFetch('/api/hr-agent/run', { method: 'POST' }).catch(() => {});
+    };
+    triggerCycle();
+    const interval = setInterval(triggerCycle, 120_000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
+
   const { employees, jobs, candidates, error, refetch, setJobs, setCandidates } =
     useLiveData(isAuthenticated, handleAuthFailure);
 

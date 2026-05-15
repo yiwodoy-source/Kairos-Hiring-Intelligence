@@ -2,12 +2,12 @@
 import {
   CheckCircle2,
   AlertCircle,
-  ExternalLink,
   RefreshCw,
   Wifi,
   WifiOff,
   MessageSquare,
-  RotateCcw,
+  PlugZap,
+  Unplug,
 } from 'lucide-react';
 import { apiFetch } from '../services/apiClient';
 
@@ -22,6 +22,7 @@ interface GoogleStatus {
   tokenValid: boolean;
   tokenError: string | null;
   gmail: boolean;
+  gmailCredentialsConfigured: boolean;
   drive: boolean;
   sheets: boolean;
   calendar: boolean;
@@ -122,16 +123,60 @@ function Card({ children, className = '' }: { children: React.ReactNode; classNa
 
 type OAuthRedirectState = 'success' | 'no_refresh_token' | 'error' | null;
 
+
 export function SettingsPage() {
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [sourcing, setSourcing] = useState<SourcingIntegrations | null>(null);
   const [sourcingTesting, setSourcingTesting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [polling, setPolling] = useState(false);
   const [oauthRedirect, setOauthRedirect] = useState<OAuthRedirectState>(null);
   const [oauthErrorDetail, setOauthErrorDetail] = useState<string | null>(null);
-  const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Gmail App Password form state
+  const [gmailEmail, setGmailEmail] = useState('');
+  const [gmailPassword, setGmailPassword] = useState('');
+  const [gmailSaving, setGmailSaving] = useState(false);
+  const [gmailSaveError, setGmailSaveError] = useState<string | null>(null);
+  const [gmailSaveSuccess, setGmailSaveSuccess] = useState(false);
+  const [gmailTesting, setGmailTesting] = useState(false);
+  const [gmailTestResult, setGmailTestResult] = useState<{ success: boolean; user?: string; error?: string } | null>(null);
+  const [showGmailForm, setShowGmailForm] = useState(false);
+
+  async function handleSaveGmailCredentials() {
+    if (!gmailEmail || !gmailPassword) return;
+    setGmailSaving(true);
+    setGmailSaveError(null);
+    setGmailSaveSuccess(false);
+    setGmailTestResult(null);
+    try {
+      await apiFetch('/api/hr-agent/gmail-credentials', {
+        method: 'POST',
+        body: JSON.stringify({ email: gmailEmail, appPassword: gmailPassword }),
+      });
+      setGmailSaveSuccess(true);
+      setGmailPassword('');
+      setShowGmailForm(false);
+      await loadStatus(true);
+    } catch (err) {
+      setGmailSaveError(err instanceof Error ? err.message : 'Failed to save credentials');
+    } finally {
+      setGmailSaving(false);
+    }
+  }
+
+  async function handleTestGmailConnection() {
+    setGmailTesting(true);
+    setGmailTestResult(null);
+    try {
+      const result = await apiFetch<{ success: boolean; user?: string; error?: string }>('/api/hr-agent/gmail-test');
+      setGmailTestResult(result);
+    } catch (err) {
+      setGmailTestResult({ success: false, error: err instanceof Error ? err.message : 'Test failed' });
+    } finally {
+      setGmailTesting(false);
+    }
+  }
 
   async function loadSourcingStatus() {
     try {
@@ -176,44 +221,6 @@ export function SettingsPage() {
     void loadStatus();
     void loadSourcingStatus();
   }, []);
-
-  // Poll every 3s for up to 3 min when waiting for the OAuth tab to complete
-  function startPolling() {
-    setPolling(true);
-    let attempts = 0;
-    pollRef.current = setInterval(async () => {
-      attempts++;
-      const data = await loadStatus(true);
-      if (data?.google?.connected) {
-        stopPolling();
-        setOauthRedirect('success');
-      } else if (attempts >= 60) {
-        stopPolling();
-      }
-    }, 3000);
-  }
-
-  function stopPolling() {
-    setPolling(false);
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }
-
-  useEffect(() => () => stopPolling(), []);
-
-  function handleConnectGoogle() {
-    if (status?.google?.authUrl) {
-      const popup = window.open(status.google.authUrl, '_blank', 'noopener,noreferrer');
-      if (!popup) {
-        setOauthRedirect('error');
-        setOauthErrorDetail('Popup blocked — please allow popups for this site and try again.');
-        return;
-      }
-      startPolling();
-    }
-  }
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
@@ -283,124 +290,117 @@ export function SettingsPage() {
       {status && (
         <>
           {/* ----------------------------------------------------------------
-              Section 1 — Google Integration
+              Section 1 — Gmail Connection (App Password)
           ---------------------------------------------------------------- */}
           <div>
-            <SectionLabel>Google Integration</SectionLabel>
+            <SectionLabel>Gmail Connection</SectionLabel>
             <Card>
-              {/* Connected banner */}
-              {status.google.connected && (
-                <div className="mb-4 flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+              {/* Status row */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${status.google.gmail ? 'bg-emerald-100' : 'bg-slate-100'}`}>
+                    {status.google.gmail ? <Wifi className="w-4 h-4 text-emerald-600" /> : <WifiOff className="w-4 h-4 text-slate-400" />}
+                  </div>
                   <div>
-                    <span className="text-sm font-semibold text-emerald-700">
-                      All Google services active
-                    </span>
-                    {status.google.connectedEmail && (
-                      <p className="text-xs text-emerald-600 mt-0.5">
-                        Connected as {status.google.connectedEmail}
-                      </p>
+                    <p className="text-sm font-semibold text-slate-800">Gmail (SMTP / IMAP)</p>
+                    {status.google.gmail && status.google.connectedEmail ? (
+                      <p className="text-xs text-emerald-600 mt-0.5 font-medium">{status.google.connectedEmail}</p>
+                    ) : (
+                      <p className="text-xs text-slate-500 mt-0.5">Read CVs and send automated replies</p>
                     )}
                   </div>
                 </div>
-              )}
-
-              {/* Token expired / invalid banner */}
-              {!status.google.connected && status.google.tokenError && (
-                <div className="mb-4 rounded-xl bg-red-50 border border-red-200 p-4">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-red-700">
-                        Google token is invalid
-                      </p>
-                      <p className="text-xs text-red-600 mt-0.5">
-                        {status.google.tokenError}
-                      </p>
-                    </div>
-                  </div>
-                  {status.google.authUrl && (
-                    <div className="mt-3">
-                      <button
-                        onClick={handleConnectGoogle}
-                        disabled={polling}
-                        className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-slate-800 rounded-xl px-4 py-2 text-sm font-semibold transition-colors"
-                      >
-                        {polling ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                        {polling ? 'Waiting for authorization…' : 'Re-authorize Google Account'}
-                      </button>
-                    </div>
-                  )}
+                <div className="flex items-center gap-2">
+                  <StatusDot connected={status.google.gmail} />
+                  <span className={`text-xs font-semibold ${status.google.gmail ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {status.google.gmail ? 'Connected' : 'Not connected'}
+                  </span>
                 </div>
-              )}
-
-              {/* Service rows */}
-              <div>
-                <ServiceRow
-                  name="Gmail"
-                  description="Send interview invitations, follow-up emails, and notifications"
-                  connected={status.google.gmail}
-                  statusText={status.google.gmail ? 'Connected' : 'Not connected'}
-                />
-                <ServiceRow
-                  name="Google Drive"
-                  description="Store resumes, reports, and hiring documents"
-                  connected={status.google.drive}
-                  statusText={status.google.drive ? 'Connected' : 'Not connected'}
-                />
-                <ServiceRow
-                  name="Google Sheets"
-                  description="Export pipeline data and sync candidate information"
-                  connected={status.google.sheets}
-                  statusText={status.google.sheets ? 'Connected' : 'Not connected'}
-                />
-                <ServiceRow
-                  name="Google Calendar"
-                  description="Schedule interviews and sync availability automatically"
-                  connected={status.google.calendar}
-                  statusText={status.google.calendar ? 'Connected' : 'Not connected'}
-                />
               </div>
 
-              {/* First-time connect button (no token set yet, no error) */}
-              {!status.google.connected && !status.google.tokenError && status.google.authUrl && (
-                <div className="mt-4 pt-4 border-t border-slate-100">
+              {/* Action buttons */}
+              <div className="mt-4 flex flex-wrap gap-2">
+                {status.google.gmail && (
                   <button
-                    onClick={handleConnectGoogle}
-                    disabled={polling}
-                    className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-slate-800 rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors"
+                    onClick={handleTestGmailConnection}
+                    disabled={gmailTesting}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-60 px-3 py-2 text-sm font-medium text-slate-700 transition-colors"
                   >
-                    {polling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
-                    {polling ? 'Waiting for authorization…' : 'Connect Google Account'}
+                    <RefreshCw className={`w-3.5 h-3.5 ${gmailTesting ? 'animate-spin' : ''}`} />
+                    {gmailTesting ? 'Testing…' : 'Test connection'}
                   </button>
-                  {polling && (
-                    <p className="text-xs text-slate-500 mt-2">
-                      Complete the sign-in in the tab that just opened — this page will update automatically.
-                    </p>
-                  )}
+                )}
+                <button
+                  onClick={() => { setShowGmailForm(v => !v); setGmailSaveError(null); setGmailSaveSuccess(false); setGmailTestResult(null); }}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 transition-colors"
+                >
+                  {status.google.gmail
+                    ? <><Unplug className="w-3.5 h-3.5" />{showGmailForm ? 'Cancel' : 'Reconnect Gmail'}</>
+                    : <><PlugZap className="w-3.5 h-3.5" />Connect Gmail</>
+                  }
+                </button>
+              </div>
+
+              {/* Test result */}
+              {gmailTestResult && (
+                <div className={`mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 ${gmailTestResult.success ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                  {gmailTestResult.success
+                    ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
+                    : <AlertCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
+                  }
+                  <span className={`text-xs ${gmailTestResult.success ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {gmailTestResult.success
+                      ? `SMTP connection verified — sending as ${gmailTestResult.user}`
+                      : `Connection failed: ${gmailTestResult.error}`
+                    }
+                  </span>
                 </div>
               )}
 
-              {/* Missing env vars hint */}
-              {!status.google.connected &&
-                !status.google.authUrl &&
-                status.google.missingVars.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-slate-100">
-                    <p className="text-xs text-amber-600 font-medium mb-2">
-                      Missing environment variables:
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {status.google.missingVars.map((v) => (
-                        <code
-                          key={v}
-                          className="px-2 py-0.5 rounded bg-amber-100 text-amber-700 text-xs font-mono"
-                        >
-                          {v}
-                        </code>
-                      ))}
+              {/* Expandable form */}
+              {(showGmailForm || !status.google.gmailCredentialsConfigured) && (
+                <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+                  <p className="text-xs text-slate-500">
+                    Google Account → Security → 2-Step Verification → App Passwords → create one for "Mail". No Google Cloud Console required.
+                  </p>
+                  {gmailSaveSuccess && (
+                    <div className="flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                      <span className="text-xs font-medium text-emerald-700">Credentials saved and verified successfully</span>
                     </div>
+                  )}
+                  {gmailSaveError && (
+                    <div className="flex items-start gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2">
+                      <AlertCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
+                      <span className="text-xs text-red-700">{gmailSaveError}</span>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <input
+                      type="email"
+                      placeholder="Gmail address (e.g. hr@company.com)"
+                      value={gmailEmail}
+                      onChange={e => { setGmailEmail(e.target.value); setGmailSaveSuccess(false); setGmailSaveError(null); }}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <input
+                      type="password"
+                      placeholder="App Password (16 characters, no spaces)"
+                      value={gmailPassword}
+                      onChange={e => { setGmailPassword(e.target.value); setGmailSaveSuccess(false); setGmailSaveError(null); }}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                      onClick={handleSaveGmailCredentials}
+                      disabled={gmailSaving || !gmailEmail || !gmailPassword}
+                      className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl px-4 py-2 text-sm font-semibold transition-colors"
+                    >
+                      {gmailSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      {gmailSaving ? 'Saving & testing…' : 'Save & Connect'}
+                    </button>
                   </div>
-                )}
+                </div>
+              )}
             </Card>
           </div>
 

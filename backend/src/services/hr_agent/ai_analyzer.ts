@@ -4,14 +4,21 @@ import { logAgentActivity } from './logger';
 import { CvAnalysisSchema } from '../../lib/ai-schemas';
 import { withRetry } from '../../lib/retry';
 
-const openai = new OpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
-  apiKey: process.env.OPENROUTER_API_KEY,
-  defaultHeaders: {
-    'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000',
-    'X-Title': 'NexusHR AI Agent',
+let _openai: OpenAI | null = null;
+function getOpenAIClient(): OpenAI {
+  if (!process.env.OPENROUTER_API_KEY) throw new Error('OpenRouter API key missing');
+  if (!_openai) {
+    _openai = new OpenAI({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: process.env.OPENROUTER_API_KEY,
+      defaultHeaders: {
+        'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000',
+        'X-Title': 'NexusHR AI Agent',
+      }
+    });
   }
-});
+  return _openai;
+}
 
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 
@@ -135,7 +142,7 @@ export async function analyzeCandidateCV(cvText: string): Promise<any> {
     }
 
     const response = await withRetry(
-      () => openai.chat.completions.create({
+      () => getOpenAIClient().chat.completions.create({
         model: 'openai/gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
         response_format: { type: 'json_object' },

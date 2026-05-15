@@ -8,6 +8,7 @@ import { getKairosStatus, getKairosRegistry, getKairosQueue } from '../agents/in
 import { sendWhatsAppMessage, getRecentMessages, getConversation, probeWhatsApp, recordInbound } from '../services/whatsapp/whatsapp_client';
 import { getAutoReplySettings, saveAutoReplySettings, handleInboundAutoReply } from '../services/whatsapp/auto_reply';
 import { getOAuth2Client, setGoogleCredentials, encryptToken, loadTokenFromDb, hasCredentials } from '../services/hr_agent/google_client';
+import { saveGmailCredentials, testSMTPConnection, loadGmailCredentials } from '../services/hr_agent/smtp_client';
 import { exportCandidateRecord } from '../services/hr_agent/candidate_export';
 import { getInterviewAvailability, scheduleCandidateInterview } from '../services/hr_agent/interview_scheduler';
 import { sendInterviewConfirmation, sendAutomatedReply } from '../services/hr_agent/email_responder';
@@ -754,7 +755,7 @@ router.post('/toggle', async (req, res) => {
 // Get status and logs
 // Vercel Cron Job endpoint — called every minute to run one agent cycle.
 // Secured by CRON_SECRET env var (set in Vercel dashboard).
-router.post('/trigger/cycle', async (req, res) => {
+router.get('/trigger/cycle', async (req, res) => {
     const cronSecret = process.env.CRON_SECRET;
     const authHeader = req.headers['authorization'];
     if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -1179,29 +1180,69 @@ router.post('/candidates/:id/outreach', async (req, res) => {
     }
 });
 
+// Gmail App Password credentials — save + verify
+router.post('/gmail-credentials', async (req, res) => {
+    try {
+        const { email, appPassword } = req.body || {};
+        if (!email || !appPassword) {
+            return res.status(400).json({ error: 'email and appPassword are required' });
+        }
+        if (typeof email !== 'string' || typeof appPassword !== 'string') {
+            return res.status(400).json({ error: 'Invalid input types' });
+        }
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email.trim())) {
+            return res.status(400).json({ error: 'Invalid email address' });
+        }
+
+        await saveGmailCredentials(email.trim(), appPassword.trim());
+        const test = await testSMTPConnection();
+        if (!test.success) {
+            return res.status(400).json({ error: `Credentials saved but SMTP test failed: ${test.error}` });
+        }
+        res.json({ success: true, user: test.user });
+    } catch (err: unknown) {
+        console.error('[HR Agent] Gmail credentials error:', err);
+        res.status(500).json({ error: errMsg(err) });
+    }
+});
+
+// Test current Gmail SMTP credentials without saving new ones
+router.get('/gmail-test', async (_req, res) => {
+    try {
+        const creds = await loadGmailCredentials();
+        if (!creds) {
+            return res.status(400).json({ success: false, error: 'No Gmail credentials configured' });
+        }
+        const test = await testSMTPConnection();
+        res.json(test);
+    } catch (err: unknown) {
+        res.status(500).json({ success: false, error: errMsg(err) });
+    }
+});
+
 // Integration status — live-tests Google token, reports real connection health
 router.get('/integration-status', async (_req, res) => {
     try {
+        // Gmail: check credentials exist — don't do live SMTP test on every load (would block/timeout)
+        const gmailCreds = await loadGmailCredentials();
+        const gmailCredentialsConfigured = Boolean(gmailCreds);
+        const gmailConnected = gmailCredentialsConfigured; // assume connected if creds saved; test only on explicit save
+
+        // Drive / Sheets / Calendar: still OAuth-based (optional features)
         const hasClientId = Boolean(process.env.GOOGLE_CLIENT_ID);
         const hasClientSecret = Boolean(process.env.GOOGLE_CLIENT_SECRET);
         const oauthConfigured = hasClientId && hasClientSecret;
-
-        // Ensure the stored DB token is loaded into the oauth2Client before checking.
-        // This is the only token source on Vercel (env var GOOGLE_REFRESH_TOKEN is optional).
         if (oauthConfigured) await loadTokenFromDb();
-
-        // hasRefreshToken is true if a token is available from either the env var OR the DB.
         const hasRefreshToken = hasCredentials();
 
-        // Always generate an auth URL so the UI can offer re-authorization
-        let authUrl: string | null = null;
+        let driveAuthUrl: string | null = null;
         if (oauthConfigured) {
             try {
-                authUrl = getOAuth2Client().generateAuthUrl({
+                driveAuthUrl = getOAuth2Client().generateAuthUrl({
                     access_type: 'offline',
                     prompt: 'consent',
                     scope: [
-                        'https://www.googleapis.com/auth/gmail.modify',
                         'https://www.googleapis.com/auth/drive.file',
                         'https://www.googleapis.com/auth/spreadsheets',
                         'https://www.googleapis.com/auth/calendar',
@@ -1210,46 +1251,31 @@ router.get('/integration-status', async (_req, res) => {
             } catch { /* oauth2Client unavailable */ }
         }
 
-        // Live-test the token — don't trust env vars alone
-        let tokenValid = false;
-        let tokenError: string | null = null;
-        let connectedEmail: string | null = null;
+        let driveConnected = false;
         if (oauthConfigured && hasRefreshToken) {
             try {
-                const gmail = (await import('../services/hr_agent/google_client')).getGmailClient();
-                const profile = await gmail.users.getProfile({ userId: 'me' });
-                tokenValid = true;
-                connectedEmail = profile.data.emailAddress ?? null;
-            } catch (err: unknown) {
-                const msg: string = (err as any)?.response?.data?.error || errMsg(err);
-                tokenError = msg.includes('invalid_grant')
-                    ? 'Refresh token expired or revoked — re-authorization required.'
-                    : msg.includes('invalid_client')
-                    ? 'OAuth client credentials are invalid.'
-                    : msg;
-            }
+                const { getDriveClient } = await import('../services/hr_agent/google_client');
+                await getDriveClient().files.list({ pageSize: 1 });
+                driveConnected = true;
+            } catch { /* not connected */ }
         }
 
-        const connected = tokenValid;
+        const connected = gmailConnected;
 
         res.json({
             google: {
                 oauthConfigured,
                 connected,
-                connectedEmail,
-                tokenValid,
-                tokenError,
-                gmail: connected,
-                drive: connected,
-                sheets: connected,
-                calendar: connected,
-                authUrl,
-                missingVars: [
-                    !hasClientId     ? 'GOOGLE_CLIENT_ID'     : null,
-                    !hasClientSecret ? 'GOOGLE_CLIENT_SECRET' : null,
-                    // Only flag token missing if there's really no token (env var AND DB)
-                    !hasRefreshToken ? 'GOOGLE_REFRESH_TOKEN (env) or OAuth authorization' : null,
-                ].filter(Boolean) as string[],
+                connectedEmail: gmailCreds?.user ?? null,
+                tokenValid: gmailConnected,
+                tokenError: gmailCredentialsConfigured ? null : 'Gmail credentials not configured — enter email + App Password below',
+                gmail: gmailConnected,
+                gmailCredentialsConfigured,
+                drive: driveConnected,
+                sheets: driveConnected,
+                calendar: driveConnected,
+                authUrl: driveAuthUrl,
+                missingVars: gmailCredentialsConfigured ? [] : ['GMAIL_USER + App Password (enter below)'],
             },
             whatsapp: {
                 enabled: process.env.WHATSAPP_ENABLED === 'true',

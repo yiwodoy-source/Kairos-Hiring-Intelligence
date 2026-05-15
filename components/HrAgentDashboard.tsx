@@ -243,8 +243,23 @@ export function HrAgentDashboard() {
     useEffect(() => {
         fetchData();
         fetchAuthUrl();
-        const interval = setInterval(fetchData, 30000);
-        return () => clearInterval(interval);
+
+        // Refresh UI data every 30 seconds
+        const refreshInterval = setInterval(fetchData, 30_000);
+
+        // Trigger an agent cycle every 2 minutes while this page is open.
+        // Vercel serverless pauses between requests so in-memory timers don't
+        // fire reliably — this client-driven trigger guarantees processing.
+        const triggerCycle = () => {
+            apiFetch('/api/hr-agent/run', { method: 'POST' }).catch(() => {});
+        };
+        triggerCycle(); // fire once immediately on page load
+        const cycleInterval = setInterval(triggerCycle, 120_000);
+
+        return () => {
+            clearInterval(refreshInterval);
+            clearInterval(cycleInterval);
+        };
     }, [fetchData]);
 
     const handleRunNow = async () => {

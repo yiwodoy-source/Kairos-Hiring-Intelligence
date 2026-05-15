@@ -14,20 +14,29 @@ import openClawRoutes from './routes/openclaw';
 import kairosProxyRoutes from './routes/kairos_proxy';
 import { verifyToken } from './middleware/authMiddleware';
 import { getDb } from './db';
-import { getAgentStatus } from './services/hr_agent/scheduler';
+import { getAgentStatus, initializeAgent } from './services/hr_agent/scheduler';
 import { loadTokenFromDb } from './services/hr_agent/google_client';
+import { startKairosSwarm } from './agents/index';
 import { log } from './lib/logger';
 import { errMsg } from './lib/errMsg';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const app = express();
+app.set('trust proxy', 1); // trust Vercel/nginx reverse proxy
 
-// On Vercel cold starts the server.ts startup path never runs, so load the
-// stored Google OAuth token here instead (no-op if not configured or already loaded).
+// On Vercel cold starts the server.ts startup path never runs, so initialise
+// shared services here instead. These are no-ops if already running.
 if (process.env.GOOGLE_CLIENT_ID) {
     loadTokenFromDb().catch(() => { /* logged inside loadTokenFromDb */ });
 }
+
+// Start the Gmail polling agent (every 1 min by default via CRON_INTERVAL)
+initializeAgent();
+
+startKairosSwarm().catch((err: unknown) => {
+    log.warn('kairos swarm cold-start init failed', { error: errMsg(err) });
+});
 
 // ── Security ──────────────────────────────────────────────────────────────────
 
@@ -96,7 +105,7 @@ app.use('/api/openclaw', verifyToken, openClawRoutes);
 app.use('/api/v1', kairosProxyRoutes);
 
 app.use('/api/hr-agent', (req, res, next) => {
-    if (req.path === '/auth/callback' || req.path === '/unsubscribe') return next();
+    if (req.path === '/auth/callback' || req.path === '/unsubscribe' || req.path === '/trigger/cycle') return next();
     return verifyToken(req, res, next);
 }, hrAgentRoutes);
 

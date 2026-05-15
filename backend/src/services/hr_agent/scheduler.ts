@@ -5,6 +5,7 @@ import { assessCandidateAgainstJobs } from './decision_engine';
 import { uploadCVToDrive } from './drive_uploader';
 import { logCandidateToSheets } from './sheets_logger';
 import { sendAutomatedReply } from './email_responder';
+import { loadGmailCredentials } from './smtp_client';
 import { logAgentActivity } from './logger';
 import { getDb } from '../../db';
 import cron from 'node-cron';
@@ -56,6 +57,12 @@ export async function runAgentCycle() {
     logAgentActivity('Starting HR Agent cycle...');
 
     try {
+        const gmailCreds = await loadGmailCredentials();
+        if (!gmailCreds) {
+            logAgentActivity('Gmail IMAP credentials not configured — skipping email check', 'WARN');
+            return;
+        }
+
         const allCVs = await checkNewEmails();
         const db = await getDb();
         const openJobs = await db.all(`
@@ -76,6 +83,13 @@ export async function runAgentCycle() {
             // Throttle between CVs — space out Gmail API + AI calls
             if (cvIndex > 0) await sleep(CV_PROCESSING_DELAY_MS);
             try {
+                // No PDF — mark read and skip, no auto-reply
+                if (!cv.attachmentBuffer) {
+                    logAgentActivity(`Skipping no-PDF email from ${cv.email} — no reply sent.`, 'WARN');
+                    try { await markAsProcessed(cv.messageId, cv.email, cv.subject, 'skipped-no-pdf'); } catch {}
+                    continue;
+                }
+
                 logAgentActivity(`Processing CV from ${cv.email}...`);
                 const text = await extractTextFromPdf(cv.attachmentBuffer);
                 const aiData = await analyzeCandidateCV(text);
@@ -109,7 +123,7 @@ export async function runAgentCycle() {
 
                 let driveLink = '';
                 try {
-                    driveLink = await uploadCVToDrive(cv.attachmentBuffer, cv.fileName);
+                    driveLink = await uploadCVToDrive(cv.attachmentBuffer!, cv.fileName ?? 'resume.pdf');
                 } catch (driveErr: any) {
                     logAgentActivity(`Drive upload failed for ${cv.email}: ${errMsg(driveErr)}`, 'WARN');
                 }

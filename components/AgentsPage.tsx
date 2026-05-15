@@ -255,6 +255,8 @@ const WhatsAppPanel: React.FC = () => {
   const [settings, setSettings] = useState<WASettings>({ enabled: false, candidateOnly: true, mode: 'immediate', customPrompt: '' });
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [autoTraining, setAutoTraining] = useState(false);
+  const [autoTrainResult, setAutoTrainResult] = useState<{ refinedPrompt: string; messageCount: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sendPhone, setSendPhone] = useState('');
   const [sendBody, setSendBody] = useState('');
@@ -323,6 +325,25 @@ const WhatsAppPanel: React.FC = () => {
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch { /* ignore */ }
     setSettingsSaving(false);
+  };
+
+  const handleAutoTrain = async () => {
+    setAutoTraining(true);
+    setAutoTrainResult(null);
+    try {
+      const r = await apiFetch<{ ok: boolean; refinedPrompt?: string; messageCount?: number; message?: string }>(
+        '/api/hr-agent/whatsapp/auto-train',
+        { method: 'POST' }
+      );
+      if (r.ok && r.refinedPrompt) {
+        setAutoTrainResult({ refinedPrompt: r.refinedPrompt, messageCount: r.messageCount ?? 0 });
+      } else {
+        setAutoTrainResult({ refinedPrompt: r.message ?? 'Not enough history.', messageCount: 0 });
+      }
+    } catch (e: unknown) {
+      setAutoTrainResult({ refinedPrompt: e instanceof Error ? e.message : 'Training failed.', messageCount: 0 });
+    }
+    setAutoTraining(false);
   };
 
   const statusDot = (s: string) => {
@@ -663,6 +684,52 @@ const WhatsAppPanel: React.FC = () => {
             {settingsSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
             {settingsSaved ? 'Saved!' : settingsSaving ? 'Saving…' : 'Save Settings'}
           </button>
+
+          {/* Auto-train section */}
+          <div className="p-4 rounded-xl border border-violet-200 bg-violet-50/40">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+                  <BrainCircuit className="w-4 h-4 text-violet-500" />
+                  Auto-Train from History
+                </div>
+                <div className="text-xs text-slate-400 mt-0.5">Analyzes recent conversations to improve AI instructions</div>
+              </div>
+              <button
+                onClick={handleAutoTrain}
+                disabled={autoTraining}
+                className="flex items-center gap-1.5 rounded-xl border border-violet-300 bg-white hover:bg-violet-50 disabled:opacity-50 px-3 py-2 text-xs font-semibold text-violet-700 transition-colors"
+              >
+                {autoTraining ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <BrainCircuit className="w-3.5 h-3.5" />}
+                {autoTraining ? 'Training…' : 'Auto-Train'}
+              </button>
+            </div>
+
+            {autoTrainResult && (
+              <div className="mt-3 space-y-2">
+                {autoTrainResult.messageCount > 0 && (
+                  <p className="text-[11px] text-violet-500 font-medium">
+                    Analyzed {autoTrainResult.messageCount} messages
+                  </p>
+                )}
+                <div className="rounded-lg border border-violet-200 bg-white p-3 text-xs text-slate-700 leading-relaxed">
+                  {autoTrainResult.refinedPrompt}
+                </div>
+                {autoTrainResult.messageCount > 0 && (
+                  <button
+                    onClick={() => {
+                      setSettings(s => ({ ...s, customPrompt: autoTrainResult.refinedPrompt }));
+                      setAutoTrainResult(null);
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-violet-300 bg-violet-100 hover:bg-violet-200 px-3 py-2 text-xs font-semibold text-violet-700 transition-colors"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Apply to AI Instructions
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
